@@ -3,7 +3,8 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     return res.status(200).json({
       status: "ok",
-      message: "Alice AI Assistant is running"
+      message: "Alice AI Assistant is running",
+      model: "grok-4.7"
     });
   }
 
@@ -13,13 +14,13 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.XAI_API_KEY;
 
   if (!apiKey) {
     return res.status(500).json({
       version: "1.0",
       response: {
-        text: "Не найден ключ Gemini. Проверь настройки сервера.",
+        text: "Не найден ключ Grok. Проверь настройки сервера.",
         end_session: false
       }
     });
@@ -47,52 +48,52 @@ export default async function handler(req, res) {
       });
     }
 
-    const geminiStart = Date.now();
+    const start = Date.now();
 
-    const geminiResponse = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    const grokResponse = await fetch(
+      "https://api.x.ai/v1/responses",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
+          "Authorization": `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          contents: [{
-            role: "user",
-            parts: [{
-              text: command
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 300
-          }
+          model: "grok-4.7",
+          input: command,
+          temperature: 0.7,
+          max_output_tokens: 300
         }),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(8000)
       }
     );
 
-    const data = await geminiResponse.json();
+    const data = await grokResponse.json();
 
     console.log(
-      "Gemini total response time:",
-      Date.now() - geminiStart,
+      "Grok response time:",
+      Date.now() - start,
       "ms"
     );
 
-    if (!geminiResponse.ok) {
-      console.error("Gemini API error:", data);
-      throw new Error("Gemini API error: " + geminiResponse.status);
+    if (!grokResponse.ok) {
+      console.error("Grok API error:", data);
+      throw new Error("Grok API error: " + grokResponse.status);
     }
 
-    const answer = data.candidates?.[0]?.content?.parts
-      ?.map(part => part.text || "")
-      .join("")
-      .trim();
+    const answer =
+      data.output
+        ?.filter(item => item.type === "message")
+        .flatMap(item => item.content || [])
+        .filter(item => item.type === "output_text")
+        .map(item => item.text || "")
+        .join("")
+        .trim() ||
+      data.output_text ||
+      "";
 
     if (!answer) {
-      throw new Error("Gemini returned an empty response");
+      throw new Error("Grok returned an empty response");
     }
 
     return res.status(200).json({
