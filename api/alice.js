@@ -47,6 +47,8 @@ export default async function handler(req, res) {
       });
     }
 
+    const geminiStart = Date.now();
+
     const geminiResponse = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
       {
@@ -72,6 +74,12 @@ export default async function handler(req, res) {
     );
 
     const data = await geminiResponse.json();
+
+    console.log(
+      "Gemini total response time:",
+      Date.now() - geminiStart,
+      "ms"
+    );
 
     if (!geminiResponse.ok) {
       console.error("Gemini API error:", data);
