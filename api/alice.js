@@ -67,7 +67,7 @@ export default async function handler(req, res) {
             maxOutputTokens: 300
           }
         }),
-        signal: AbortSignal.timeout(3500)
+        signal: AbortSignal.timeout(4000)
       }
     );
 
