@@ -42,9 +42,9 @@ jobs:
 
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          printf '%s\\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
           ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
 
@@ -72,20 +72,20 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="$RUNNER_TEMP/alice-ai-assistant.tar.gz"
-          tar -czf "$ARCHIVE" \\
-            --exclude='.env' \\
-            --exclude='.env.*' \\
-            --exclude='node_modules' \\
-            --exclude='tmp' \\
-            -C "$GITHUB_WORKSPACE" \\
+          tar -czf "$ARCHIVE" \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='node_modules' \
+            --exclude='tmp' \
+            -C "$GITHUB_WORKSPACE" \
             server.js package.json api/alice.js .env.example .gitignore
 
-          printf -v REMOTE_CMD \\
-            'set -e; mkdir -p "$HOME/%s"; tar -xzf - -C "$HOME/%s"; mkdir -p "$HOME/%s/tmp"; test -s "$HOME/%s/server.js"; test -s "$HOME/%s/package.json"; test -s "$HOME/%s/api/alice.js"; printf "Upload verified: %%s\\n" "$HOME/%s"; ls -l "$HOME/%s" "$HOME/%s/api"' \\
+          printf -v REMOTE_CMD \
+            'set -e; mkdir -p "$HOME/%s"; tar -xzf - -C "$HOME/%s"; mkdir -p "$HOME/%s/tmp"; test -s "$HOME/%s/server.js"; test -s "$HOME/%s/package.json"; test -s "$HOME/%s/api/alice.js"; printf "Upload verified: %%s\n" "$HOME/%s"; ls -l "$HOME/%s" "$HOME/%s/api"' \
             "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR"
 
-          cat "$ARCHIVE" | ssh -A -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \\
-            -i "$HOME/.ssh/id_ed25519" -p "$BEGET_SSH_PORT" \\
+          cat "$ARCHIVE" | ssh -A -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -i "$HOME/.ssh/id_ed25519" -p "$BEGET_SSH_PORT" \
             "$BEGET_SSH_USER@$BEGET_SSH_HOST" "$REMOTE_CMD"
 
           echo "Application files uploaded. No .env file was sent; public_html was not touched."
