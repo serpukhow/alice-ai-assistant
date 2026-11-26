@@ -820,6 +820,9 @@ export default async function handler(req, res) {
         ? rawCommand.trim()
         : "";
 
+    const isFallbackDiagnostic =
+      /^проверь резервную модель[.!?]*$/i.test(command);
+
     if (!command) {
       return res.status(200).json(
         createResponse(
@@ -1037,7 +1040,7 @@ export default async function handler(req, res) {
     let memories = [];
     let conversationContext = null;
 
-    if (userId && memoryConfigured) {
+    if (userId && memoryConfigured && !isFallbackDiagnostic) {
       const contextLoadStart = Date.now();
 
       const memoryPromise = shouldLoadMemories(command)
@@ -1205,11 +1208,8 @@ ${memoryContext}
 
     // Временная диагностическая команда позволяет проверить резервную
     // модель напрямую, не дожидаясь случайной перегрузки основной.
-    const isFallbackDiagnostic =
-      /^проверь резервную модель[.!?]*$/i.test(command);
-
     if (isFallbackDiagnostic) {
-      console.log("Fallback diagnostic: forcing gemini-3.6-flash");
+      console.log("Fallback diagnostic: forcing gemini-3.1-flash-lite");
     }
 
     // При перегрузке основной модели пробуем другой Gemini Flash.
@@ -1218,7 +1218,7 @@ ${memoryContext}
 
     for (let attempt = 1; attempt <= maxGeminiAttempts; attempt++) {
       responseModel = isFallbackDiagnostic || attempt === 2
-        ? "gemini-3.6-flash"
+        ? "gemini-3.1-flash-lite"
         : MODEL;
 
       const requestUrl =
@@ -1255,7 +1255,7 @@ ${memoryContext}
 
           // Сохраняем время для ответа Алисы и сохранения истории.
           signal: AbortSignal.timeout(
-            responseModel === MODEL ? 2700 : 2400
+            responseModel === MODEL ? 2700 : 2700
           )
         }
       );
@@ -1277,7 +1277,7 @@ ${memoryContext}
         console.warn(
           "Gemini model overloaded:",
           MODEL,
-          "- switching to gemini-3.6-flash"
+          "- switching to gemini-3.1-flash-lite"
         );
         continue;
       }
@@ -1329,7 +1329,7 @@ ${memoryContext}
       ["m", limitUtf8(spokenAnswer, 260)]
     ];
 
-    if (userId && memoryConfigured) {
+    if (userId && memoryConfigured && !isFallbackDiagnostic) {
       try {
         await saveConversationContext(
           userId,
