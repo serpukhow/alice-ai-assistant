@@ -10,6 +10,7 @@ on:
         options:
           - check-ssh
           - check-docker
+          - install-node
           - upload
           - restart
         default: check-ssh
@@ -57,9 +58,9 @@ jobs:
 
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
           ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
@@ -80,18 +81,64 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
-            'printf "SSH connection successful\n"; printf "Account: "; whoami; printf "Home: %s\n" "$HOME"; pwd'
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \\
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \\
+            'printf "SSH connection successful\\n"; printf "Account: "; whoami; printf "Home: %s\\n" "$HOME"; pwd'
 
       - name: Check Beget Docker environment
         if: ${{ inputs.operation == 'check-docker' }}
         shell: bash
         run: |
           set -euo pipefail
-          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
-            'ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost "printf \"Docker SSH connection successful\n\"; printf \"Account: \"; whoami; printf \"Home: %s\n\" \"\$HOME\"; node -v; npm -v"'
+          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \\
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \\
+            'ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost "export PATH=\\"\\$HOME/.local/bin:\\$PATH\\"; printf \\"Docker SSH connection successful\\\\n\\"; printf \\"Account: \\"; whoami; printf \\"Home: %s\\\\n\\" \\"\\$HOME\\"; command -v node || true; node -v; npm -v"'
+
+      - name: Install Node.js 24.15.0 in Beget account
+        if: ${{ inputs.operation == 'install-node' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REMOTE_SCRIPT_B64="$(base64 -w0 <<'BEGET_NODE_INSTALL'
+          set -eu
+          . /etc/os-release
+          [ "${ID:-}" = "ubuntu" ] && [ "${VERSION_ID:-}" = "22.04" ] || {
+            echo "Unsupported OS: ${PRETTY_NAME:-unknown}; expected Ubuntu 22.04"
+            exit 1
+          }
+          [ "$(uname -m)" = "x86_64" ] || {
+            echo "Unsupported architecture: $(uname -m); expected x86_64"
+            exit 1
+          }
+
+          NODE_VERSION="24.15.0"
+          ARCHIVE="node-v${NODE_VERSION}-linux-x64.tar.xz"
+          EXPECTED_SHA256="472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6"
+
+          mkdir -p "$HOME/.local"
+          cd "$HOME/.local"
+
+          if [ -x "$HOME/.local/bin/node" ] && "$HOME/.local/bin/node" --version | grep -q "^v${NODE_VERSION}$"; then
+            echo "Node.js ${NODE_VERSION} is already installed."
+          else
+            wget -q "https://nodejs.org/download/release/v${NODE_VERSION}/${ARCHIVE}" -O "${ARCHIVE}"
+            printf '%s  %s\\n' "$EXPECTED_SHA256" "$ARCHIVE" | sha256sum -c -
+            tar -xJf "$ARCHIVE" --strip-components=1
+            rm -f "$ARCHIVE"
+          fi
+
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "Node.js: $(node --version)"
+          echo "npm: $(npm --version)"
+          command -v node
+          command -v npm
+          BEGET_NODE_INSTALL
+          )"
+
+          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \\
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \\
+            "printf '%s' '$REMOTE_SCRIPT_B64' | ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost 'base64 -d | bash'"
 
       - name: Set up Node.js for source validation
         if: ${{ inputs.operation == 'upload' }}
@@ -113,17 +160,17 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="$RUNNER_TEMP/alice-ai-assistant.tar.gz"
-          tar -czf "$ARCHIVE" \
-            --exclude='.env' \
-            --exclude='node_modules' \
-            -C "$GITHUB_WORKSPACE" \
+          tar -czf "$ARCHIVE" \\
+            --exclude='.env' \\
+            --exclude='node_modules' \\
+            -C "$GITHUB_WORKSPACE" \\
             server.js package.json api/alice.js .env.example .gitignore
 
-          printf -v REMOTE_CMD \
-            'mkdir -p "$HOME/%s" && tar -xzf - -C "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && printf "Files uploaded to %%s\n" "$HOME/%s"' \
+          printf -v REMOTE_CMD \\
+            'mkdir -p "$HOME/%s" && tar -xzf - -C "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && printf "Files uploaded to %%s\\n" "$HOME/%s"' \\
             "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR"
 
-          cat "$ARCHIVE" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          cat "$ARCHIVE" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \\
             -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" "$REMOTE_CMD"
 
       - name: Restart Passenger app
@@ -131,9 +178,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf -v REMOTE_CMD \
-            'test -d "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && touch "$HOME/%s/tmp/restart.txt" && printf "Restart signal sent for %%s\n" "$HOME/%s"' \
+          printf -v REMOTE_CMD \\
+            'test -d "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && touch "$HOME/%s/tmp/restart.txt" && printf "Restart signal sent for %%s\\n" "$HOME/%s"' \\
             "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR"
 
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \\
             -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" "$REMOTE_CMD"
