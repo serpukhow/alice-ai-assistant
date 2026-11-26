@@ -1203,17 +1203,28 @@ ${memoryContext}
     let data = null;
     let responseModel = MODEL;
 
+    // Временная диагностическая команда позволяет проверить резервную
+    // модель напрямую, не дожидаясь случайной перегрузки основной.
+    const isFallbackDiagnostic =
+      /^проверь резервную модель[.!?]*$/i.test(command);
+
+    if (isFallbackDiagnostic) {
+      console.log("Fallback diagnostic: forcing gemini-3.6-flash");
+    }
+
     // При перегрузке основной модели пробуем другой Gemini Flash.
     // Это лучше, чем повторять запрос к тому же перегруженному серверу.
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      responseModel = attempt === 1
-        ? MODEL
-        : "gemini-3.6-flash";
+    const maxGeminiAttempts = isFallbackDiagnostic ? 1 : 2;
+
+    for (let attempt = 1; attempt <= maxGeminiAttempts; attempt++) {
+      responseModel = isFallbackDiagnostic || attempt === 2
+        ? "gemini-3.6-flash"
+        : MODEL;
 
       const requestUrl =
         `https://generativelanguage.googleapis.com/v1beta/models/${responseModel}:generateContent`;
 
-      const requestBody = attempt === 1
+      const requestBody = responseModel === MODEL
         ? geminiBody
         : JSON.stringify({
             systemInstruction: {
@@ -1244,7 +1255,7 @@ ${memoryContext}
 
           // Сохраняем время для ответа Алисы и сохранения истории.
           signal: AbortSignal.timeout(
-            attempt === 1 ? 2700 : 2200
+            responseModel === MODEL ? 2700 : 2400
           )
         }
       );
@@ -1256,6 +1267,8 @@ ${memoryContext}
       }
 
       const shouldUseFallback =
+        !isFallbackDiagnostic &&
+        responseModel === MODEL &&
         attempt === 1 &&
         geminiResponse.status === 503 &&
         Date.now() - start <= 1500;
