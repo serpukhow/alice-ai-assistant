@@ -72,11 +72,12 @@ export default async function handler(req, res) {
         message_keys: message && typeof message === "object" ? Object.keys(message) : [],
         content_type: typeof message?.content,
         content_is_array: Array.isArray(message?.content),
-        content_sample: typeof message?.content === "string"
-          ? message.content.slice(0, 100)
-          : Array.isArray(message?.content)
-            ? JSON.stringify(message.content).slice(0, 300)
-            : null
+        content_keys: message?.content && typeof message.content === "object"
+          ? Object.keys(message.content)
+          : [],
+        content_json: message?.content && typeof message.content === "object"
+          ? JSON.stringify(message.content).slice(0, 500)
+          : null
       });
     }
 
