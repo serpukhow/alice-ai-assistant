@@ -1178,47 +1178,72 @@ ${memoryContext}
 
     const start = Date.now();
 
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-      {
-        method: "POST",
+    const geminiUrl =
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": process.env.GEMINI_API_KEY
-        },
+    const geminiBody = JSON.stringify({
+      systemInstruction: {
+        parts: [{
+          text: systemInstruction
+        }]
+      },
 
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{
-              text: systemInstruction
-            }]
+      contents,
+
+      generationConfig: {
+        maxOutputTokens: 320,
+
+        thinkingConfig: {
+          thinkingLevel: "MINIMAL"
+        }
+      }
+    });
+
+    let geminiResponse;
+    let data = null;
+
+    // Google иногда временно отвечает 503 из-за высокой нагрузки.
+    // Делаем одну короткую повторную попытку, только для временных ошибок.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      geminiResponse = await fetch(
+        geminiUrl,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": process.env.GEMINI_API_KEY
           },
 
-          contents,
+          body: geminiBody,
 
-          generationConfig: {
-            maxOutputTokens: 320,
+          signal: AbortSignal.timeout(
+            attempt === 1 ? 2700 : 1600
+          )
+        }
+      );
 
-            thinkingConfig: {
-              thinkingLevel: "MINIMAL"
-            }
-          }
-        }),
+      data = await geminiResponse.json();
 
-        signal: AbortSignal.timeout(2700)
+      if (geminiResponse.ok) {
+        break;
       }
-    );
 
-    const data = await geminiResponse.json();
+      const temporaryError =
+        [429, 500, 502, 503, 504].includes(geminiResponse.status);
 
-    console.log(
-      "Gemini response time:",
-      Date.now() - start,
-      "ms"
-    );
+      const firstAttemptStillHasTime =
+        attempt === 1 && Date.now() - start <= 1700;
 
-    if (!geminiResponse.ok) {
+      if (temporaryError && firstAttemptStillHasTime) {
+        console.warn(
+          "Gemini temporary error:",
+          geminiResponse.status,
+          "- retrying once"
+        );
+        continue;
+      }
+
       console.error(
         "Gemini API error:",
         geminiResponse.status,
@@ -1228,6 +1253,16 @@ ${memoryContext}
       throw new Error(
         "Gemini API error: " + geminiResponse.status
       );
+    }
+
+    console.log(
+      "Gemini response time:",
+      Date.now() - start,
+      "ms"
+    );
+
+    if (!geminiResponse?.ok) {
+      throw new Error("Gemini did not return a successful response");
     }
 
     const answer =
