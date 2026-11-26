@@ -1188,7 +1188,7 @@ ${memoryContext}
           }
         }),
 
-        signal: AbortSignal.timeout(2700)
+        signal: AbortSignal.timeout(2200)
       }
     );
 
