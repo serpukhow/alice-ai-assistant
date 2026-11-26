@@ -67,6 +67,8 @@ jobs:
           ssh-add "$HOME/.ssh/id_ed25519"
 
           {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
             echo "BEGET_SSH_HOST=$BEGET_SSH_HOST"
             echo "BEGET_SSH_USER=$BEGET_SSH_USER"
             echo "BEGET_SSH_PORT=$BEGET_SSH_PORT"
