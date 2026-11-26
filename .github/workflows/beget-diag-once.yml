@@ -1,0 +1,126 @@
+name: One-time Beget diagnostics
+
+on:
+  push:
+    paths:
+      - .github/workflows/beget-diag-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: startsWith(github.event.head_commit.message, 'ONE_TIME_BEGET_DIAG')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Configure verified Beget SSH access
+        shell: bash
+        env:
+          BEGET_SSH_HOST: ${{ vars.BEGET_SSH_HOST }}
+          BEGET_SSH_USER: ${{ vars.BEGET_SSH_USER }}
+          BEGET_SSH_PORT: ${{ vars.BEGET_SSH_PORT || '22' }}
+          BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}
+          BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/id_ed25519"
+          {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "BEGET_SSH_HOST=$BEGET_SSH_HOST"
+            echo "BEGET_SSH_USER=$BEGET_SSH_USER"
+            echo "BEGET_SSH_PORT=$BEGET_SSH_PORT"
+          } >> "$GITHUB_ENV"
+
+      - name: Inspect Beget app without revealing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_SCRIPT_B64="$(base64 -w0 <<'BEGET_DIAG'
+          set +x
+          export PATH="$HOME/.local/bin:$PATH"
+          APP="$HOME/alice-ai-assistant"
+          DOMAIN_ROOT="$HOME/tech/public_html"
+
+          echo "=== ACCOUNT AND NODE ==="
+          id
+          printf 'HOME=%s\n' "$HOME"
+          node --version || true
+          npm --version || true
+
+          echo "=== APPLICATION FILES ==="
+          for f in "$APP/server.js" "$APP/api/alice.js" "$APP/package.json" "$APP/.env"; do
+            if [ -f "$f" ]; then
+              stat -c '%A %U:%G %s bytes %n' "$f"
+            else
+              echo "MISSING: $f"
+            fi
+          done
+          if [ -f "$APP/package.json" ]; then cat "$APP/package.json"; fi
+          if [ -f "$APP/server.js" ]; then node --check "$APP/server.js" && echo "server.js syntax: OK"; fi
+          if [ -f "$APP/api/alice.js" ]; then node --check "$APP/api/alice.js" && echo "api/alice.js syntax: OK"; fi
+
+          echo "=== SECRET VARIABLE PRESENCE ONLY (VALUES HIDDEN) ==="
+          ENV_FILE="$APP/.env"
+          if [ -f "$ENV_FILE" ]; then
+            for key in GEMINI_API_KEY SUPABASE_URL SUPABASE_SECRET_KEY CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_AI_TOKEN; do
+              if grep -Eq "^[[:space:]]*${key}[[:space:]]*=[[:space:]]*[^[:space:]#]" "$ENV_FILE"; then
+                echo "$key: SET"
+              else
+                echo "$key: EMPTY_OR_MISSING"
+              fi
+            done
+            if grep -Fq 'https://zunoypsbappjahyhwiwq.supabase.co' "$ENV_FILE"; then
+              echo "SUPABASE_URL expected project: MATCH"
+            else
+              echo "SUPABASE_URL expected project: NOT_MATCHED"
+            fi
+            stat -c 'env permissions: %A %U:%G' "$ENV_FILE"
+          else
+            echo ".env missing"
+          fi
+
+          echo "=== DOMAIN CONFIGURATION ==="
+          find "$HOME" -maxdepth 6 -type f -name .htaccess -print 2>/dev/null | head -30
+          if [ -f "$DOMAIN_ROOT/.htaccess" ]; then
+            echo "--- $DOMAIN_ROOT/.htaccess ---"
+            sed -n '1,40p' "$DOMAIN_ROOT/.htaccess"
+          fi
+
+          echo "=== APP STATUS ROUTES ==="
+          curl -sS --max-time 10 -i http://127.0.0.1/health || true
+          echo
+          curl -sS --max-time 10 -i http://tech.ohotnik50.ru/health || true
+          echo
+          curl -sS --max-time 10 http://tech.ohotnik50.ru/api/alice/ || true
+          echo
+
+          echo "=== TEST POST TO GEMINI (NO SECRET VALUES PRINTED) ==="
+          curl -sS --max-time 15 -X POST             -H 'Content-Type: application/json; charset=utf-8'             --data-binary '{"version":"1.0","session":{"new":true,"session_id":"beget-diagnostic","message_id":0},"request":{"command":"Привет! Ответь коротко: сервер работает?"},"state":{"session":{}}}'             http://tech.ohotnik50.ru/api/alice/ || true
+          echo
+
+          echo "=== POSSIBLE LOG LOCATIONS ==="
+          find "$HOME" -maxdepth 6 -type f \( -iname '*error*.log' -o -iname '*tech*.log' -o -iname '*passenger*.log' -o -name 'stderr.log' \) -print 2>/dev/null | head -40
+          find "$HOME" -maxdepth 4 -type d -iname '*log*' -print 2>/dev/null | head -30
+
+          echo "=== RECENT LOG TAILS (REDACTED) ==="
+          find "$HOME" -maxdepth 6 -type f \( -iname '*error*.log' -o -iname '*tech*.log' -o -iname '*passenger*.log' -o -name 'stderr.log' \) -print 2>/dev/null | head -10 | while IFS= read -r logfile; do
+            echo "--- $logfile ---"
+            tail -n 35 "$logfile" 2>/dev/null | sed -E 's/(GEMINI_API_KEY|SUPABASE_SECRET_KEY|CLOUDFLARE_AI_TOKEN|Authorization: Bearer)[^[:space:]]*/\1=[REDACTED]/Ig' | tail -n 35
+          done
+
+          echo "=== RUNNING PROCESSES ==="
+          ps -u "$(id -un)" -o pid,comm,args 2>/dev/null | grep -Ei 'passenger|node|nginx|apache' | grep -v grep | head -30 || true
+          BEGET_DIAG
+          )"
+          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
+            "printf '%s' '$REMOTE_SCRIPT_B64' | ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost 'base64 -d | bash'"
