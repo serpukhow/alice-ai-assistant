@@ -556,7 +556,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 800
+      timeoutMs: 550
     }
   );
 
@@ -602,7 +602,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 500,
+      timeoutMs: 400,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -766,7 +766,7 @@ function createResponse(body, text, history) {
 // -----------------------------
 
 export default async function handler(req, res) {
-  const MODEL = "gemini-3.5-flash-lite";
+  const MODEL = "cloudflare-glm-4.7-flash";
 
   const memoryConfigured = Boolean(
     process.env.SUPABASE_URL &&
@@ -785,8 +785,8 @@ export default async function handler(req, res) {
       status: "ok",
       message: "Alice AI Assistant is running",
       model: MODEL,
-      fallback: cloudflareConfigured
-        ? "cloudflare-glm-4.7-flash"
+      fallback: process.env.GEMINI_API_KEY
+        ? "gemini-3.5-flash-lite"
         : "not_configured",
       memory: memoryConfigured
         ? "session+supabase"
@@ -1181,34 +1181,135 @@ ${memoryContext}
     });
 
     // -----------------------------
-    // ОСНОВНОЙ ПРОВАЙДЕР: GEMINI
-    // РЕЗЕРВНЫЙ ПРОВАЙДЕР: CLOUDFLARE WORKERS AI
+    // ОСНОВНОЙ ПРОВАЙДЕР: CLOUDFLARE WORKERS AI
+    // РЕЗЕРВНЫЙ ПРОВАЙДЕР: GEMINI
+    // Ограничиваем общее время, чтобы укладываться в лимит Яндекс Диалогов.
     // -----------------------------
 
     const aiStart = Date.now();
     let answer = "";
-    let primaryFailure = null;
+    let cloudflareFailure = null;
 
-    const geminiUrl =
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+    // Cloudflare выбран первым для тестирования: отдельный smoke-test
+    // подтвердил быстрый ответ GLM-4.7-Flash.
+    if (cloudflareConfigured) {
+      try {
+        const cloudflareMessages = [
+          {
+            role: "system",
+            content: systemInstruction
+          },
+          ...activeHistory.map(([role, text]) => ({
+            role: role === "m" ? "assistant" : "user",
+            content: text
+          })),
+          {
+            role: "user",
+            content: command
+          }
+        ];
 
-    const geminiBody = JSON.stringify({
-      systemInstruction: {
-        parts: [{
-          text: systemInstruction
-        }]
-      },
-      contents,
-      generationConfig: {
-        maxOutputTokens: 320,
-        thinkingConfig: {
-          thinkingLevel: "MINIMAL"
+        const cloudflareUrl =
+          `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/zai-org/glm-4.7-flash`;
+
+        const cloudflareStart = Date.now();
+        const cloudflareResponse = await fetch(
+          cloudflareUrl,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${process.env.CLOUDFLARE_AI_TOKEN}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              messages: cloudflareMessages,
+              max_tokens: 320,
+              chat_template_kwargs: {
+                enable_thinking: false
+              },
+              stream: false
+            }),
+            signal: AbortSignal.timeout(1600)
+          }
+        );
+
+        const cloudflareData = await cloudflareResponse.json().catch(() => null);
+
+        if (!cloudflareResponse.ok || cloudflareData?.success === false) {
+          const errorCodes = Array.isArray(cloudflareData?.errors)
+            ? cloudflareData.errors
+                .map(item => item?.code || "provider_error")
+                .join(", ")
+                .slice(0, 200)
+            : "";
+
+          throw new Error(
+            "Cloudflare API error: " + cloudflareResponse.status +
+            (errorCodes ? " (" + errorCodes + ")" : "")
+          );
         }
-      }
-    });
 
-    // Gemini остаётся основным провайдером.
-    try {
+        const cloudflareResult = cloudflareData?.result || {};
+        const cloudflareChoices =
+          cloudflareResult.choices || cloudflareData?.choices;
+
+        const answerCandidates = [
+          cloudflareResult.response,
+          cloudflareResult.output_text,
+          cloudflareChoices?.[0]?.message?.content,
+          cloudflareChoices?.[0]?.text,
+          cloudflareResult.response?.choices?.[0]?.message?.content
+        ];
+
+        answer = answerCandidates.find(
+          value => typeof value === "string" && value.trim()
+        )?.trim() || "";
+
+        if (!answer) {
+          throw new Error("Cloudflare returned an empty response");
+        }
+
+        console.log(
+          "AI response provider: Cloudflare GLM-4.7-Flash",
+          Date.now() - cloudflareStart,
+          "ms"
+        );
+      } catch (error) {
+        cloudflareFailure = error;
+        console.warn(
+          "Cloudflare unavailable; switching to Gemini:",
+          error?.name || "Error"
+        );
+      }
+    } else {
+      console.warn("Cloudflare fallback is not configured; using Gemini");
+    }
+
+    // Gemini — независимый резервный провайдер.
+    if (!answer) {
+      if (!process.env.GEMINI_API_KEY) {
+        throw cloudflareFailure || new Error("No AI provider is configured");
+      }
+
+      const geminiUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent`;
+
+      const geminiBody = JSON.stringify({
+        systemInstruction: {
+          parts: [{
+            text: systemInstruction
+          }]
+        },
+        contents,
+        generationConfig: {
+          maxOutputTokens: 320,
+          thinkingConfig: {
+            thinkingLevel: "MINIMAL"
+          }
+        }
+      });
+
+      const geminiStart = Date.now();
       const geminiResponse = await fetch(
         geminiUrl,
         {
@@ -1218,142 +1319,33 @@ ${memoryContext}
             "x-goog-api-key": process.env.GEMINI_API_KEY
           },
           body: geminiBody,
-          signal: AbortSignal.timeout(1300)
+          signal: AbortSignal.timeout(1050)
         }
       );
 
       const geminiData = await geminiResponse.json().catch(() => null);
 
       if (!geminiResponse.ok) {
-        primaryFailure = new Error(
-          "Gemini API error: " + geminiResponse.status
-        );
-        console.warn(
-          "Gemini unavailable; switching to Cloudflare:",
+        console.error(
+          "Gemini fallback API error:",
           geminiResponse.status
         );
-      } else {
-        answer =
-          geminiData?.candidates?.[0]?.content?.parts
-            ?.map(part => part.text || "")
-            .join("")
-            .trim() || "";
-
-        if (!answer) {
-          primaryFailure = new Error("Gemini returned an empty response");
-          console.warn("Gemini returned an empty response; switching to Cloudflare");
-        } else {
-          console.log(
-            "AI response provider: Gemini",
-            Date.now() - aiStart,
-            "ms"
-          );
-        }
-      }
-    } catch (geminiError) {
-      primaryFailure = geminiError;
-      console.warn(
-        "Gemini request failed; switching to Cloudflare:",
-        geminiError?.name || "Error"
-      );
-    }
-
-    // Независимый резерв Cloudflare Workers AI.
-    if (!answer) {
-      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-      const apiToken = process.env.CLOUDFLARE_AI_TOKEN;
-
-      if (!accountId || !apiToken) {
-        console.error("Cloudflare fallback is not configured");
-        throw primaryFailure || new Error("No AI provider is available");
+        throw new Error("Gemini API error: " + geminiResponse.status);
       }
 
-      const cloudflareMessages = [
-        {
-          role: "system",
-          content: systemInstruction
-        },
-        ...activeHistory.map(([role, text]) => ({
-          role: role === "m" ? "assistant" : "user",
-          content: text
-        })),
-        {
-          role: "user",
-          content: command
-        }
-      ];
-
-      const cloudflareUrl =
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/zai-org/glm-4.7-flash`;
-
-      const cloudflareStart = Date.now();
-      const cloudflareResponse = await fetch(
-        cloudflareUrl,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiToken}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            messages: cloudflareMessages,
-            max_tokens: 320,
-            chat_template_kwargs: {
-              enable_thinking: false
-            },
-            stream: false
-          }),
-          signal: AbortSignal.timeout(2300)
-        }
-      );
-
-      const cloudflareData = await cloudflareResponse.json().catch(() => null);
-
-      if (!cloudflareResponse.ok || cloudflareData?.success === false) {
-        const errorCodes = Array.isArray(cloudflareData?.errors)
-          ? cloudflareData.errors
-              .map(item => item?.code || "provider_error")
-              .join(", ")
-              .slice(0, 200)
-          : "";
-
-        console.error(
-          "Cloudflare Workers AI error:",
-          cloudflareResponse.status,
-          errorCodes
-        );
-
-        throw new Error(
-          "Cloudflare Workers AI error: " + cloudflareResponse.status
-        );
-      }
-
-      const cloudflareResult = cloudflareData?.result || {};
-      const cloudflareChoices =
-        cloudflareResult.choices || cloudflareData?.choices;
-
-      const answerCandidates = [
-        cloudflareResult.response,
-        cloudflareResult.output_text,
-        cloudflareChoices?.[0]?.message?.content,
-        cloudflareChoices?.[0]?.text,
-        cloudflareResult.response?.choices?.[0]?.message?.content
-      ];
-
-      answer = answerCandidates.find(
-        value => typeof value === "string" && value.trim()
-      )?.trim() || "";
+      answer =
+        geminiData?.candidates?.[0]?.content?.parts
+          ?.map(part => part.text || "")
+          .join("")
+          .trim() || "";
 
       if (!answer) {
-        console.error(
-          "Cloudflare returned an empty or unsupported response format"
-        );
-        throw new Error("Cloudflare returned an empty response");
+        throw new Error("Gemini returned an empty response");
       }
 
       console.log(
-        "AI response provider: Cloudflare GLM-4.7-Flash",
-        Date.now() - cloudflareStart,
+        "AI response provider: Gemini fallback",
+        Date.now() - geminiStart,
         "ms"
       );
     }
