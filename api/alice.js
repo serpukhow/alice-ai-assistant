@@ -1368,7 +1368,7 @@ ${memoryContext}
       cloudflareController.abort();
     }
 
-    answer = winner.answer;
+    const answer = winner.answer;
 
     console.log(
       "AI provider winner:",
