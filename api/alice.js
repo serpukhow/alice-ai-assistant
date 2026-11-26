@@ -366,27 +366,51 @@ async function supabaseRequest(path, options = {}) {
   }
 
   const {
-    timeoutMs = 1000,
+    timeoutMs = 1800,
     headers: additionalHeaders = {},
     ...fetchOptions
   } = options;
 
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/${path}`,
-    {
-      ...fetchOptions,
+  const requestStartedAt = Date.now();
+  const tableName = path.split("?")[0];
+  let response;
+  let responseText;
 
-      signal: AbortSignal.timeout(timeoutMs),
+  try {
+    response = await fetch(
+      `${supabaseUrl}/rest/v1/${path}`,
+      {
+        ...fetchOptions,
 
-      headers: {
-        "apikey": secretKey,
-        "Content-Type": "application/json",
-        ...additionalHeaders
+        signal: AbortSignal.timeout(timeoutMs),
+
+        headers: {
+          "apikey": secretKey,
+          "Content-Type": "application/json",
+          ...additionalHeaders
+        }
       }
-    }
-  );
+    );
 
-  const responseText = await response.text();
+    responseText = await response.text();
+  } catch (error) {
+    console.error(
+      "Supabase request failed:",
+      tableName,
+      Date.now() - requestStartedAt,
+      "ms",
+      error?.name || "Error"
+    );
+    throw error;
+  }
+
+  console.log(
+    "Supabase request:",
+    tableName,
+    response.status,
+    Date.now() - requestStartedAt,
+    "ms"
+  );
 
   let data = null;
 
@@ -426,7 +450,7 @@ async function loadMemories(userId) {
     `alice_memories?${params.toString()}`,
     {
       method: "GET",
-      timeoutMs: 800
+      timeoutMs: 1800
     }
   );
 }
@@ -520,7 +544,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 650
+      timeoutMs: 1800
     }
   );
 
@@ -566,7 +590,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 500,
+      timeoutMs: 1800,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -604,22 +628,44 @@ async function resetConversationContext(userId) {
     yandex_user_id: "eq." + userId
   });
 
-  await supabaseRequest(
-    "alice_conversation_context?" + params.toString(),
-    {
-      method: "PATCH",
-      timeoutMs: 650,
-      headers: {
-        "Prefer": "return=minimal"
-      },
-      body: JSON.stringify({
-        summary: "",
-        recent_messages: [],
-        turn_count: 0,
-        updated_at: new Date().toISOString()
-      })
+  const requestPath =
+    "alice_conversation_context?" + params.toString();
+
+  const payload = {
+    summary: "",
+    recent_messages: [],
+    turn_count: 0,
+    updated_at: new Date().toISOString()
+  };
+
+  // PATCH идемпотентен: при сетевом тайм-ауте безопасно повторить очистку.
+  // Повторяем один раз с увеличенным лимитом ожидания.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await supabaseRequest(
+        requestPath,
+        {
+          method: "PATCH",
+          timeoutMs: attempt === 1 ? 1800 : 3000,
+          headers: {
+            "Prefer": "return=minimal"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      return;
+    } catch (error) {
+      if (attempt === 2) {
+        throw error;
+      }
+
+      console.warn(
+        "Conversation reset timed out or failed; retrying once:",
+        error?.name || "Error"
+      );
     }
-  );
+  }
 }
 
 // Сохранение воспоминания.
@@ -1164,7 +1210,7 @@ ${memoryContext}
           }
         }),
 
-        signal: AbortSignal.timeout(2700)
+        signal: AbortSignal.timeout(8000)
       }
     );
 
