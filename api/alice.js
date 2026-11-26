@@ -766,7 +766,7 @@ function createResponse(body, text, history) {
 // -----------------------------
 
 export default async function handler(req, res) {
-  const MODEL = "cloudflare-glm-4.7-flash";
+  const MODEL = "gemini-3.5-flash-lite";
 
   const memoryConfigured = Boolean(
     process.env.SUPABASE_URL &&
@@ -785,8 +785,8 @@ export default async function handler(req, res) {
       status: "ok",
       message: "Alice AI Assistant is running",
       model: MODEL,
-      fallback: process.env.GEMINI_API_KEY
-        ? "gemini-3.5-flash-lite"
+      fallback: cloudflareConfigured
+        ? "cloudflare-glm-4.7-flash"
         : "not_configured",
       memory: memoryConfigured
         ? "session+supabase"
@@ -1181,14 +1181,71 @@ ${memoryContext}
     });
 
     // -----------------------------
-    // УМНОЕ ПЕРЕКЛЮЧЕНИЕ МЕЖДУ ПРОВАЙДЕРАМИ
-    // Cloudflare запускается первой. Если за 450 мс ответа нет,
-    // параллельно запускается Gemini. Используем первый готовый ответ.
+    // ОСНОВНАЯ МОДЕЛЬ: GEMINI
+    // РЕЗЕРВ: CLOUDFLARE WORKERS AI
+    // Cloudflare запускается, если Gemini не ответила за 650 мс.
     // -----------------------------
 
     const aiStart = Date.now();
     const cloudflareController = new AbortController();
     const geminiController = new AbortController();
+
+    const requestGemini = async () => {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error("Gemini is not configured");
+      }
+
+      const startedAt = Date.now();
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": process.env.GEMINI_API_KEY
+          },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: systemInstruction
+              }]
+            },
+            contents,
+            generationConfig: {
+              maxOutputTokens: 320,
+              thinkingConfig: {
+                thinkingLevel: "MINIMAL"
+              }
+            }
+          }),
+          signal: AbortSignal.any([
+            geminiController.signal,
+            AbortSignal.timeout(1400)
+          ])
+        }
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error("Gemini API error: " + response.status);
+      }
+
+      const text = data?.candidates?.[0]?.content?.parts
+        ?.map(part => part.text || "")
+        .join("")
+        .trim() || "";
+
+      if (!text) {
+        throw new Error("Gemini returned an empty response");
+      }
+
+      console.log("AI response provider: Gemini", Date.now() - startedAt, "ms");
+      return {
+        provider: "Gemini",
+        answer: text
+      };
+    };
 
     const requestCloudflare = async () => {
       if (!cloudflareConfigured) {
@@ -1229,7 +1286,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             cloudflareController.signal,
-            AbortSignal.timeout(2100)
+            AbortSignal.timeout(3300)
           ])
         }
       );
@@ -1240,7 +1297,10 @@ ${memoryContext}
         const codes = Array.isArray(data?.errors)
           ? data.errors.map(item => item?.code || "provider_error").join(", ").slice(0, 200)
           : "";
-        throw new Error("Cloudflare API error: " + response.status + (codes ? " (" + codes + ")" : ""));
+        throw new Error(
+          "Cloudflare API error: " + response.status +
+          (codes ? " (" + codes + ")" : "")
+        );
       }
 
       const result = data?.result || {};
@@ -1261,71 +1321,46 @@ ${memoryContext}
         throw new Error("Cloudflare returned an empty response");
       }
 
-      console.log("AI response provider: Cloudflare GLM-4.7-Flash", Date.now() - startedAt, "ms");
+      console.log(
+        "AI response provider: Cloudflare GLM-4.7-Flash",
+        Date.now() - startedAt,
+        "ms"
+      );
+
       return {
         provider: "Cloudflare GLM-4.7-Flash",
         answer: text
       };
     };
 
-    const requestGemini = async () => {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error("Gemini is not configured");
-      }
-
-      const startedAt = Date.now();
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": process.env.GEMINI_API_KEY
-          },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{
-                text: systemInstruction
-              }]
-            },
-            contents,
-            generationConfig: {
-              maxOutputTokens: 320,
-              thinkingConfig: {
-                thinkingLevel: "MINIMAL"
-              }
-            }
-          }),
-          signal: AbortSignal.any([
-            geminiController.signal,
-            AbortSignal.timeout(1900)
-          ])
-        }
+    const geminiPromise = requestGemini().catch(error => {
+      console.warn(
+        "Gemini provider failed:",
+        error?.name || "Error",
+        String(error?.message || "").slice(0, 160)
       );
+      throw error;
+    });
 
-      const data = await response.json().catch(() => null);
+    // Даём основной модели короткую фору. Если она ответила — резерв
+    // не вызывается. При ошибке или задержке подключаем Cloudflare.
+    const cloudflarePromise = (async () => {
+      const firstWait = await Promise.race([
+        geminiPromise
+          .then(result => ({ geminiWon: true, result }))
+          .catch(() => ({ geminiWon: false })),
+        new Promise(resolve => setTimeout(
+          () => resolve({ geminiWon: false }),
+          650
+        ))
+      ]);
 
-      if (!response.ok) {
-        throw new Error("Gemini API error: " + response.status);
+      if (firstWait.geminiWon) {
+        return firstWait.result;
       }
 
-      const text = data?.candidates?.[0]?.content?.parts
-        ?.map(part => part.text || "")
-        .join("")
-        .trim() || "";
-
-      if (!text) {
-        throw new Error("Gemini returned an empty response");
-      }
-
-      console.log("AI response provider: Gemini", Date.now() - startedAt, "ms");
-      return {
-        provider: "Gemini",
-        answer: text
-      };
-    };
-
-    const cloudflarePromise = requestCloudflare().catch(error => {
+      return await requestCloudflare();
+    })().catch(error => {
       console.warn(
         "Cloudflare provider failed:",
         error?.name || "Error",
@@ -1334,38 +1369,12 @@ ${memoryContext}
       throw error;
     });
 
-    // Не запускаем второй запрос, если Cloudflare уже успела ответить.
-    const geminiPromise = (async () => {
-      const firstWait = await Promise.race([
-        cloudflarePromise
-          .then(result => ({ cloudflareWon: true, result }))
-          .catch(() => ({ cloudflareWon: false })),
-        new Promise(resolve => setTimeout(
-          () => resolve({ cloudflareWon: false }),
-          450
-        ))
-      ]);
-
-      if (firstWait.cloudflareWon) {
-        return firstWait.result;
-      }
-
-      return await requestGemini().catch(error => {
-        console.warn(
-          "Gemini provider failed:",
-          error?.name || "Error",
-          String(error?.message || "").slice(0, 160)
-        );
-        throw error;
-      });
-    })();
-
     let winner;
 
     try {
       winner = await Promise.any([
-        cloudflarePromise,
-        geminiPromise
+        geminiPromise,
+        cloudflarePromise
       ]);
     } catch (providerErrors) {
       console.error(
@@ -1375,11 +1384,11 @@ ${memoryContext}
       throw new Error("No AI provider returned a response");
     }
 
-    // Останавливаем запрос второго провайдера после получения первого ответа.
-    if (winner.provider === "Cloudflare GLM-4.7-Flash") {
-      geminiController.abort();
-    } else {
+    // Останавливаем резервный запрос после получения первого успешного ответа.
+    if (winner.provider === "Gemini") {
       cloudflareController.abort();
+    } else {
+      geminiController.abort();
     }
 
     const answer = winner.answer;
