@@ -1229,7 +1229,7 @@ ${memoryContext}
               },
               stream: false
             }),
-            signal: AbortSignal.timeout(1600)
+            signal: AbortSignal.timeout(2450)
           }
         );
 
@@ -1319,7 +1319,7 @@ ${memoryContext}
             "x-goog-api-key": process.env.GEMINI_API_KEY
           },
           body: geminiBody,
-          signal: AbortSignal.timeout(1050)
+          signal: AbortSignal.timeout(800)
         }
       );
 
