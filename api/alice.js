@@ -140,14 +140,20 @@ function tokenizeRussian(value) {
 }
 
 function shouldLoadMemories(command) {
-  const words = new Set(tokenizeRussian(command));
+  const normalized = String(command)
+    .toLowerCase()
+    .replace(/ё/g, "е");
 
-  return [...words].some(word =>
-    ["я", "мне", "меня", "мой", "моя", "мое", "мои",
-     "назови", "скажи", "люблю", "предпочитаю"].includes(word) ||
-    word.startsWith("помн") ||
-    word.startsWith("вспомн") ||
-    word.startsWith("запомн")
+  // Не загружаем таблицу воспоминаний из-за обычных местоимений
+  // ("я собираюсь", "мне нужно" и т. п.). Читаем её только тогда,
+  // когда пользователь действительно спрашивает о личных фактах.
+  return (
+    /\b(?:помн\w*|вспомн\w*|запомн\w*)\b/u.test(normalized) ||
+    /\b(?:мой|моя|мое|мои)\s+(?:любим\w*|предпочитаем\w*)/u.test(normalized) ||
+    /\bчто\s+(?:я\s+)?люблю\b/u.test(normalized) ||
+    /\bмне\s+нравится\b/u.test(normalized) ||
+    /\bкак\s+меня\s+зовут\b/u.test(normalized) ||
+    /\bчто\s+ты\s+знаешь\s+обо\s+мне\b/u.test(normalized)
   );
 }
 
@@ -556,7 +562,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 550
+      timeoutMs: 700
     }
   );
 
@@ -602,7 +608,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 400,
+      timeoutMs: 300,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -1093,6 +1099,13 @@ export default async function handler(req, res) {
 
     history = activeHistory;
 
+    console.log(
+      "Conversation history source:",
+      durableHistory.length > 0 ? "Supabase" : "Yandex session_state",
+      activeHistory.length,
+      "messages"
+    );
+
     // -----------------------------
     // ПРЯМОЙ ОТВЕТ ИЗ ПАМЯТИ
     // -----------------------------
@@ -1183,7 +1196,8 @@ ${memoryContext}
     // -----------------------------
     // ОСНОВНАЯ МОДЕЛЬ: GEMINI
     // РЕЗЕРВ: CLOUDFLARE WORKERS AI
-    // Cloudflare запускается, если Gemini не ответила за 650 мс.
+    // Резерв запускается через 350 мс, если Gemini ещё не ответила.
+    // Лимиты подобраны так, чтобы оставить время на чтение/сохранение контекста.
     // -----------------------------
 
     const aiStart = Date.now();
@@ -1286,7 +1300,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             cloudflareController.signal,
-            AbortSignal.timeout(3300)
+            AbortSignal.timeout(3000)
           ])
         }
       );
@@ -1351,7 +1365,7 @@ ${memoryContext}
           .catch(() => ({ geminiWon: false })),
         new Promise(resolve => setTimeout(
           () => resolve({ geminiWon: false }),
-          650
+          350
         ))
       ]);
 
