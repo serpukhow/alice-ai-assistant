@@ -1190,7 +1190,7 @@ ${memoryContext}
     let primaryFailure = null;
 
     const geminiUrl =
-      \`https://generativelanguage.googleapis.com/v1beta/models/\${MODEL}:generateContent\`;
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
     const geminiBody = JSON.stringify({
       systemInstruction: {
@@ -1284,7 +1284,7 @@ ${memoryContext}
       ];
 
       const cloudflareUrl =
-        \`https://api.cloudflare.com/client/v4/accounts/\${accountId}/ai/run/@cf/zai-org/glm-4.7-flash\`;
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/zai-org/glm-4.7-flash`;
 
       const cloudflareStart = Date.now();
       const cloudflareResponse = await fetch(
@@ -1292,7 +1292,7 @@ ${memoryContext}
         {
           method: "POST",
           headers: {
-            "Authorization": \`Bearer \${apiToken}\`,
+            "Authorization": `Bearer ${apiToken}`,
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
