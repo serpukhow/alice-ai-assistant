@@ -1226,20 +1226,35 @@ ${memoryContext}
 
       const requestBody = responseModel === MODEL
         ? geminiBody
-        : JSON.stringify({
-            systemInstruction: {
-              parts: [{
-                text: systemInstruction
-              }]
-            },
-            contents,
-            generationConfig: {
-              maxOutputTokens: 320,
-              thinkingConfig: {
-                thinkingLevel: "LOW"
+        : isFallbackDiagnostic
+          ? JSON.stringify({
+              contents: [{
+                role: "user",
+                parts: [{
+                  text: "Ответь одной короткой фразой на русском: резервная модель работает."
+                }]
+              }],
+              generationConfig: {
+                maxOutputTokens: 48,
+                thinkingConfig: {
+                  thinkingLevel: "MINIMAL"
+                }
               }
-            }
-          });
+            })
+          : JSON.stringify({
+              systemInstruction: {
+                parts: [{
+                  text: systemInstruction
+                }]
+              },
+              contents,
+              generationConfig: {
+                maxOutputTokens: 320,
+                thinkingConfig: {
+                  thinkingLevel: "MINIMAL"
+                }
+              }
+            });
 
       geminiResponse = await fetch(
         requestUrl,
@@ -1255,7 +1270,7 @@ ${memoryContext}
 
           // Сохраняем время для ответа Алисы и сохранения истории.
           signal: AbortSignal.timeout(
-            responseModel === MODEL ? 2700 : 2700
+            responseModel === MODEL ? 2700 : 3200
           )
         }
       );
