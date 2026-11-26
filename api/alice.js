@@ -1298,6 +1298,9 @@ ${memoryContext}
           body: JSON.stringify({
             messages: cloudflareMessages,
             max_tokens: 320,
+            chat_template_kwargs: {
+              enable_thinking: false
+            },
             stream: false
           }),
           signal: AbortSignal.timeout(1900)
