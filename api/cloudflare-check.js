@@ -61,11 +61,22 @@ export default async function handler(req, res) {
     )?.trim() || "";
 
     if (!answer) {
-      console.error("Cloudflare smoke test returned unsupported response format");
-      return res.status(502).json({
+      const firstChoice = Array.isArray(result.choices) ? result.choices[0] : null;
+      const message = firstChoice?.message;
+      return res.status(200).json({
         ok: false,
-        error: "Empty or unsupported response format",
-        result_keys: Object.keys(result)
+        error: "Response shape inspected",
+        result_keys: Object.keys(result),
+        choice_keys: firstChoice && typeof firstChoice === "object" ? Object.keys(firstChoice) : [],
+        message_type: typeof message,
+        message_keys: message && typeof message === "object" ? Object.keys(message) : [],
+        content_type: typeof message?.content,
+        content_is_array: Array.isArray(message?.content),
+        content_sample: typeof message?.content === "string"
+          ? message.content.slice(0, 100)
+          : Array.isArray(message?.content)
+            ? JSON.stringify(message.content).slice(0, 300)
+            : null
       });
     }
 
