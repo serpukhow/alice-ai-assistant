@@ -583,6 +583,21 @@ async function saveConversationContext(userId, existing, command, answer) {
   );
 }
 
+
+async function persistEarlyConversationTurn(userId, configured, command, answer) {
+  if (!userId || !configured) {
+    return;
+  }
+
+  try {
+    const existing = await loadConversationContext(userId);
+    await saveConversationContext(userId, existing, command, answer);
+  } catch (error) {
+    // Ошибка сохранения истории не должна мешать голосовому ответу.
+    console.error("Early conversation context save failed:", error);
+  }
+}
+
 async function resetConversationContext(userId) {
   const params = new URLSearchParams({
     yandex_user_id: "eq." + userId
@@ -825,6 +840,8 @@ export default async function handler(req, res) {
         ["m", limitUtf8(fastMathAnswer, 260)]
       ];
 
+      await persistEarlyConversationTurn(userId, memoryConfigured, command, fastMathAnswer);
+
       console.log("Fast math answer used");
 
       return res.status(200).json(
@@ -903,6 +920,8 @@ export default async function handler(req, res) {
             ? "Я уже храню эту информацию в долговременной памяти."
             : "Хорошо, я сохранила это в долговременной памяти. Смогу вспомнить даже в следующем разговоре.";
 
+          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
+
           return res.status(200).json(
             createResponse(
               body,
@@ -926,6 +945,8 @@ export default async function handler(req, res) {
             ? "Хорошо, я удалила эту запись из памяти."
             : "Не нашла точную такую запись в памяти.";
 
+          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
+
           return res.status(200).json(
             createResponse(
               body,
@@ -944,6 +965,8 @@ export default async function handler(req, res) {
 
           const answer =
             "Готово. Я очистила долговременную память.";
+
+          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
 
           return res.status(200).json(
             createResponse(
