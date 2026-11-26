@@ -26,7 +26,10 @@ export default async function handler(req, res) {
             { role: "system", content: "Отвечай кратко и на русском языке." },
             { role: "user", content: "Напиши строго: Cloudflare работает." }
           ],
-          max_tokens: 40,
+          max_tokens: 100,
+          chat_template_kwargs: {
+            enable_thinking: false
+          },
           stream: false
         }),
         signal: AbortSignal.timeout(7000)
