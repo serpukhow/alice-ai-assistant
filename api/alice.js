@@ -580,7 +580,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 700
+      timeoutMs: 800
     }
   );
 
@@ -1214,8 +1214,8 @@ ${memoryContext}
     // -----------------------------
     // ОСНОВНАЯ МОДЕЛЬ: GEMINI
     // РЕЗЕРВ: CLOUDFLARE WORKERS AI
-    // Резерв запускается через 350 мс, если Gemini ещё не ответила.
-    // Лимиты подобраны так, чтобы оставить время на чтение/сохранение контекста.
+    // Gemini и Cloudflare запускаются параллельно.
+    // Побеждает первый корректный ответ; второй запрос сразу отменяется.
     // -----------------------------
 
     const aiStart = Date.now();
@@ -1252,7 +1252,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             geminiController.signal,
-            AbortSignal.timeout(1400)
+            AbortSignal.timeout(2500)
           ])
         }
       );
@@ -1318,7 +1318,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             cloudflareController.signal,
-            AbortSignal.timeout(3000)
+            AbortSignal.timeout(3600)
           ])
         }
       );
@@ -1374,25 +1374,10 @@ ${memoryContext}
       throw error;
     });
 
-    // Даём основной модели короткую фору. Если она ответила — резерв
-    // не вызывается. При ошибке или задержке подключаем Cloudflare.
-    const cloudflarePromise = (async () => {
-      const firstWait = await Promise.race([
-        geminiPromise
-          .then(result => ({ geminiWon: true, result }))
-          .catch(() => ({ geminiWon: false })),
-        new Promise(resolve => setTimeout(
-          () => resolve({ geminiWon: false }),
-          350
-        ))
-      ]);
-
-      if (firstWait.geminiWon) {
-        return firstWait.result;
-      }
-
-      return await requestCloudflare();
-    })().catch(error => {
+    // Запускаем обе модели одновременно: провайдеры иногда отвечают
+    // с переменной задержкой, поэтому ожидание одной перед стартом другой
+    // уменьшало шанс получить голосовой ответ вовремя.
+    const cloudflarePromise = requestCloudflare().catch(error => {
       console.warn(
         "Cloudflare provider failed:",
         error?.name || "Error",
