@@ -143,28 +143,36 @@ function shouldLoadMemories(command) {
   const normalized = String(command)
     .toLowerCase()
     .replace(/ё/g, "е");
-
-  // Используем Unicode-границы: \b в JavaScript не распознаёт
-  // кириллицу как часть слова.
-  const wordStart = "(?:^|[^\\p{L}\\p{N}_])";
-  const wordEnd = "(?=$|[^\\p{L}\\p{N}_])";
+  const words = tokenizeRussian(normalized);
 
   // Не загружаем воспоминания из-за обычных местоимений
   // ("я собираюсь", "мне нужно" и т. п.).
-  return (
-    new RegExp(
-      wordStart + "(?:помн|вспомн|запомн)[\\p{L}]*" + wordEnd,
-      "u"
-    ).test(normalized) ||
-    new RegExp(
-      wordStart + "(?:мой|моя|мое|мои)\\s+(?:любим|предпочитаем)[\\p{L}]*",
-      "u"
-    ).test(normalized) ||
-    /(?:^|[^\\p{L}\\p{N}_])что\\s+(?:я\\s+)?люблю(?=$|[^\\p{L}\\p{N}_])/u.test(normalized) ||
-    /(?:^|[^\\p{L}\\p{N}_])мне\\s+нравится(?=$|[^\\p{L}\\p{N}_])/u.test(normalized) ||
-    /(?:^|[^\\p{L}\\p{N}_])как\\s+меня\\s+зовут(?=$|[^\\p{L}\\p{N}_])/u.test(normalized) ||
-    /(?:^|[^\\p{L}\\p{N}_])что\\s+ты\\s+знаешь\\s+обо\\s+мне(?=$|[^\\p{L}\\p{N}_])/u.test(normalized)
+  // Для русских слов используем токенизацию, а не \b:
+  // JavaScript \b не считает кириллицу символами слова.
+  const asksToRecall = words.some(word =>
+    word.startsWith("помн") ||
+    word.startsWith("вспомн") ||
+    word.startsWith("запомн")
   );
+
+  const personalFactPhrases = [
+    "мой любим",
+    "моя любим",
+    "мое любим",
+    "мои любим",
+    "мой предпочита",
+    "моя предпочита",
+    "мое предпочита",
+    "мои предпочита",
+    "что я люблю",
+    "что люблю",
+    "мне нравится",
+    "как меня зовут",
+    "что ты знаешь обо мне"
+  ];
+
+  return asksToRecall ||
+    personalFactPhrases.some(phrase => normalized.includes(phrase));
 }
 
 function findRelevantMemory(command, memories) {
