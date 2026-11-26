@@ -1,0 +1,137 @@
+name: Beget SSH deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Allowed operation"
+        required: true
+        type: choice
+        options:
+          - check-ssh
+          - check-docker
+          - upload
+          - restart
+        default: check-ssh
+      source_branch:
+        description: "Git branch to upload (used only for upload)"
+        required: false
+        default: feature/conversation-context
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beget-ssh-\${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  beget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source branch
+        if: \${{ inputs.operation == 'upload' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: \${{ inputs.source_branch }}
+
+      - name: Validate configuration and install SSH key
+        shell: bash
+        env:
+          BEGET_SSH_HOST: \${{ vars.BEGET_SSH_HOST }}
+          BEGET_SSH_USER: \${{ vars.BEGET_SSH_USER }}
+          BEGET_SSH_PORT: \${{ vars.BEGET_SSH_PORT || '22' }}
+          BEGET_APP_DIR: \${{ vars.BEGET_APP_DIR || 'alice-ai-assistant' }}
+          BEGET_SSH_PRIVATE_KEY: \${{ secrets.BEGET_SSH_PRIVATE_KEY }}
+          BEGET_KNOWN_HOSTS: \${{ secrets.BEGET_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          [[ "$BEGET_SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "::error::Set repository variable BEGET_SSH_HOST"; exit 1; }
+          [[ "$BEGET_SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::Set repository variable BEGET_SSH_USER"; exit 1; }
+          [[ "$BEGET_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo "::error::Invalid BEGET_SSH_PORT"; exit 1; }
+          [[ "$BEGET_APP_DIR" =~ ^[A-Za-z0-9._/-]+$ && "$BEGET_APP_DIR" != /* && "$BEGET_APP_DIR" != *..* ]] || { echo "::error::Invalid BEGET_APP_DIR"; exit 1; }
+          [[ -n "$BEGET_SSH_PRIVATE_KEY" ]] || { echo "::error::Add secret BEGET_SSH_PRIVATE_KEY"; exit 1; }
+          [[ -n "$BEGET_KNOWN_HOSTS" ]] || { echo "::error::Add secret BEGET_KNOWN_HOSTS after verifying the Beget host fingerprint"; exit 1; }
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" >/dev/null
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/id_ed25519"
+
+          {
+            echo "BEGET_SSH_HOST=$BEGET_SSH_HOST"
+            echo "BEGET_SSH_USER=$BEGET_SSH_USER"
+            echo "BEGET_SSH_PORT=$BEGET_SSH_PORT"
+            echo "BEGET_APP_DIR=$BEGET_APP_DIR"
+          } >> "$GITHUB_ENV"
+
+      - name: Check Beget SSH access
+        if: \${{ inputs.operation == 'check-ssh' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
+            'printf "SSH connection successful\n"; printf "Account: "; whoami; printf "Home: %s\n" "$HOME"; pwd'
+
+      - name: Check Beget Docker environment
+        if: \${{ inputs.operation == 'check-docker' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
+            'ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost "printf \"Docker SSH connection successful\n\"; printf \"Account: \"; whoami; printf \"Home: %s\n\" \"\$HOME\"; node -v; npm -v"'
+
+      - name: Set up Node.js for source validation
+        if: \${{ inputs.operation == 'upload' }}
+        uses: actions/setup-node@1e60f620b9541d7b1a6dce2b2f0d3f5c3c2c5b77 # v4.0.4
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        if: \${{ inputs.operation == 'upload' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check server.js
+          node --check api/alice.js
+
+      - name: Upload application files (does not upload .env or touch public_html)
+        if: \${{ inputs.operation == 'upload' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/alice-ai-assistant.tar.gz"
+          tar -czf "$ARCHIVE" \
+            --exclude='.env' \
+            --exclude='node_modules' \
+            -C "$GITHUB_WORKSPACE" \
+            server.js package.json api/alice.js .env.example .gitignore
+
+          printf -v REMOTE_CMD \
+            'mkdir -p "$HOME/%s" && tar -xzf - -C "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && printf "Files uploaded to %%s\n" "$HOME/%s"' \
+            "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR"
+
+          cat "$ARCHIVE" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" "$REMOTE_CMD"
+
+      - name: Restart Passenger app
+        if: \${{ inputs.operation == 'restart' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf -v REMOTE_CMD \
+            'test -d "$HOME/%s" && mkdir -p "$HOME/%s/tmp" && touch "$HOME/%s/tmp/restart.txt" && printf "Restart signal sent for %%s\n" "$HOME/%s"' \
+            "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR" "$BEGET_APP_DIR"
+
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" "$REMOTE_CMD"
