@@ -1,10 +1,12 @@
 
 export default async function handler(req, res) {
+  const MODEL = "gemini-3.5-flash-lite";
+
   if (req.method === "GET") {
     return res.status(200).json({
       status: "ok",
       message: "Alice AI Assistant is running",
-      model: "grok-4.7"
+      model: MODEL
     });
   }
 
@@ -14,31 +16,36 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
     return res.status(500).json({
       version: "1.0",
       response: {
-        text: "Не найден ключ Grok. Проверь настройки сервера.",
+        text: "Не найден ключ Gemini. Проверь настройки сервера.",
         end_session: false
       }
     });
   }
 
-  try {
-    let body = req.body || {};
+  let body = req.body || {};
 
+  try {
     if (typeof body === "string") {
       body = JSON.parse(body);
     }
 
-    const command =
+    const rawCommand =
       body.request?.command ||
       body.request?.original_utterance ||
       "";
 
-    if (!command.trim()) {
+    const command =
+      typeof rawCommand === "string"
+        ? rawCommand.trim()
+        : "";
+
+    if (!command) {
       return res.status(200).json({
         version: body.version || "1.0",
         response: {
@@ -50,50 +57,54 @@ export default async function handler(req, res) {
 
     const start = Date.now();
 
-    const grokResponse = await fetch(
-      "https://api.x.ai/v1/responses",
+    const geminiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          "x-goog-api-key": apiKey
         },
         body: JSON.stringify({
-          model: "grok-4.7",
-          input: command,
-          temperature: 0.7,
-          max_output_tokens: 300
+          contents: [{
+            role: "user",
+            parts: [{
+              text: command
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 300
+          }
         }),
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(4000)
       }
     );
 
-    const data = await grokResponse.json();
+    const data = await geminiResponse.json();
 
     console.log(
-      "Grok response time:",
+      "Gemini response time:",
       Date.now() - start,
       "ms"
     );
 
-    if (!grokResponse.ok) {
-      console.error("Grok API error:", data);
-      throw new Error("Grok API error: " + grokResponse.status);
+    if (!geminiResponse.ok) {
+      console.error("Gemini API error:", data);
+      throw new Error(
+        "Gemini API error: " + geminiResponse.status
+      );
     }
 
     const answer =
-      data.output
-        ?.filter(item => item.type === "message")
-        .flatMap(item => item.content || [])
-        .filter(item => item.type === "output_text")
-        .map(item => item.text || "")
+      data.candidates?.[0]?.content?.parts
+        ?.map(part => part.text || "")
         .join("")
-        .trim() ||
-      data.output_text ||
-      "";
+        .trim() || "";
 
     if (!answer) {
-      throw new Error("Grok returned an empty response");
+      console.error("Gemini empty response:", data);
+      throw new Error("Gemini returned an empty response");
     }
 
     return res.status(200).json({
@@ -108,7 +119,7 @@ export default async function handler(req, res) {
     console.error("Assistant error:", error);
 
     return res.status(200).json({
-      version: "1.0",
+      version: body.version || "1.0",
       response: {
         text: "Сейчас не получается получить ответ от нейросети. Попробуй немного позже.",
         end_session: false
@@ -116,4 +127,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
