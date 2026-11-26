@@ -426,7 +426,7 @@ async function loadMemories(userId) {
     `alice_memories?${params.toString()}`,
     {
       method: "GET",
-      timeoutMs: 650
+      timeoutMs: 800
     }
   );
 }
