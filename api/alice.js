@@ -425,7 +425,8 @@ async function loadMemories(userId) {
   return await supabaseRequest(
     `alice_memories?${params.toString()}`,
     {
-      method: "GET"
+      method: "GET",
+      timeoutMs: 650
     }
   );
 }
@@ -519,7 +520,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 750
+      timeoutMs: 650
     }
   );
 
@@ -565,7 +566,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 650,
+      timeoutMs: 500,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -1161,7 +1162,7 @@ ${memoryContext}
           }
         }),
 
-        signal: AbortSignal.timeout(2200)
+        signal: AbortSignal.timeout(2700)
       }
     );
 
