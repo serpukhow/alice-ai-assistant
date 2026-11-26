@@ -1229,7 +1229,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             cloudflareController.signal,
-            AbortSignal.timeout(1700)
+            AbortSignal.timeout(2100)
           ])
         }
       );
@@ -1298,7 +1298,7 @@ ${memoryContext}
           }),
           signal: AbortSignal.any([
             geminiController.signal,
-            AbortSignal.timeout(1300)
+            AbortSignal.timeout(1900)
           ])
         }
       );
@@ -1325,7 +1325,14 @@ ${memoryContext}
       };
     };
 
-    const cloudflarePromise = requestCloudflare();
+    const cloudflarePromise = requestCloudflare().catch(error => {
+      console.warn(
+        "Cloudflare provider failed:",
+        error?.name || "Error",
+        String(error?.message || "").slice(0, 160)
+      );
+      throw error;
+    });
 
     // Не запускаем второй запрос, если Cloudflare уже успела ответить.
     const geminiPromise = (async () => {
@@ -1343,7 +1350,14 @@ ${memoryContext}
         return firstWait.result;
       }
 
-      return await requestGemini();
+      return await requestGemini().catch(error => {
+        console.warn(
+          "Gemini provider failed:",
+          error?.name || "Error",
+          String(error?.message || "").slice(0, 160)
+        );
+        throw error;
+      });
     })();
 
     let winner;
