@@ -490,10 +490,10 @@ ${memoryContext}
           contents,
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 300
+            maxOutputTokens: 180
           }
         }),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(2200)
       }
     );
 
