@@ -1476,7 +1476,7 @@ ${memoryContext}
     const updatedHistory = [
       ...activeHistory,
       ["u", limitUtf8(command, 160)],
-      ["m", limitUtf8(spokenAnswer, 260)]
+      ["m", spokenAnswer]
     ];
 
     if (userId && memoryConfigured) {
