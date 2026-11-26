@@ -366,7 +366,7 @@ async function supabaseRequest(path, options = {}) {
   }
 
   const {
-    timeoutMs = 1800,
+    timeoutMs = 1000,
     headers: additionalHeaders = {},
     ...fetchOptions
   } = options;
@@ -450,7 +450,7 @@ async function loadMemories(userId) {
     `alice_memories?${params.toString()}`,
     {
       method: "GET",
-      timeoutMs: 1800
+      timeoutMs: 900
     }
   );
 }
@@ -544,7 +544,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 1800
+      timeoutMs: 900
     }
   );
 
@@ -590,7 +590,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 1800,
+      timeoutMs: 650,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -628,44 +628,22 @@ async function resetConversationContext(userId) {
     yandex_user_id: "eq." + userId
   });
 
-  const requestPath =
-    "alice_conversation_context?" + params.toString();
-
-  const payload = {
-    summary: "",
-    recent_messages: [],
-    turn_count: 0,
-    updated_at: new Date().toISOString()
-  };
-
-  // PATCH идемпотентен: при сетевом тайм-ауте безопасно повторить очистку.
-  // Повторяем один раз с увеличенным лимитом ожидания.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      await supabaseRequest(
-        requestPath,
-        {
-          method: "PATCH",
-          timeoutMs: attempt === 1 ? 1800 : 3000,
-          headers: {
-            "Prefer": "return=minimal"
-          },
-          body: JSON.stringify(payload)
-        }
-      );
-
-      return;
-    } catch (error) {
-      if (attempt === 2) {
-        throw error;
-      }
-
-      console.warn(
-        "Conversation reset timed out or failed; retrying once:",
-        error?.name || "Error"
-      );
+  await supabaseRequest(
+    "alice_conversation_context?" + params.toString(),
+    {
+      method: "PATCH",
+      timeoutMs: 1500,
+      headers: {
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify({
+        summary: "",
+        recent_messages: [],
+        turn_count: 0,
+        updated_at: new Date().toISOString()
+      })
     }
-  }
+  );
 }
 
 // Сохранение воспоминания.
@@ -1210,7 +1188,7 @@ ${memoryContext}
           }
         }),
 
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(2700)
       }
     );
 
