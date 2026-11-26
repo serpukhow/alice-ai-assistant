@@ -92,6 +92,109 @@ function isSensitiveMemory(value) {
   return /парол[ья]|api[\s_-]?key|sb_secret_|gsk_|токен|секретный ключ|ключ доступа/i.test(value);
 }
 
+// Нормализация распространённых форм русских слов.
+
+function normalizeRussianWord(word) {
+  const variants = {
+    люблю: "люб",
+    любишь: "люб",
+    любит: "люб",
+    любим: "люб",
+    любимый: "люб",
+    любимая: "люб",
+    любимое: "люб",
+    любимые: "люб",
+    любить: "люб",
+
+    напитка: "напиток",
+    напитку: "напиток",
+    напитком: "напиток",
+    напитке: "напиток",
+    напитки: "напиток",
+    напитков: "напиток",
+    напиткам: "напиток",
+    напитками: "напиток",
+    напитках: "напиток"
+  };
+
+  return variants[word] || word;
+}
+
+function tokenizeRussian(value) {
+  return (
+    String(value)
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .match(/[\p{L}\p{N}]+/gu) || []
+  ).map(normalizeRussianWord);
+}
+
+// Поиск подходящего воспоминания без обращения к Gemini.
+
+function findRelevantMemory(command, memories) {
+  const stopWords = new Set([
+    "какой", "какая", "какие", "какое",
+    "мой", "моя", "мое", "мои",
+    "меня", "мне", "я", "ты", "вы",
+    "что", "кто", "где", "когда",
+    "как", "ли", "же", "это",
+    "есть", "был", "была", "были",
+    "или", "и", "а", "но",
+    "в", "на", "у", "из", "для",
+    "с", "со", "по", "о", "об",
+    "про", "назови", "скажи",
+    "пожалуйста", "помнишь",
+    "вспомни", "запомнила", "запомнил"
+  ]);
+
+  const queryWords = [
+    ...new Set(
+      tokenizeRussian(command).filter(
+        word =>
+          word.length > 2 &&
+          !stopWords.has(word)
+      )
+    )
+  ];
+
+  if (queryWords.length < 2) {
+    return null;
+  }
+
+  let best = null;
+
+  for (const item of memories) {
+    const memoryWords = new Set(
+      tokenizeRussian(item.memory)
+    );
+
+    const matched = queryWords.filter(
+      word => memoryWords.has(word)
+    ).length;
+
+    const coverage = matched / queryWords.length;
+
+    if (
+      matched >= 2 &&
+      coverage >= 0.65 &&
+      (!best || matched > best.matched)
+    ) {
+      best = {
+        item,
+        matched
+      };
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return `Я помню: ${best.item.memory}`;
+}
+
+// Работа с Supabase.
+
 async function supabaseRequest(path, options = {}) {
   const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const secretKey = process.env.SUPABASE_SECRET_KEY;
@@ -100,14 +203,21 @@ async function supabaseRequest(path, options = {}) {
     throw new Error("Supabase configuration is missing");
   }
 
+  const {
+    timeoutMs = 1000,
+    headers: additionalHeaders = {},
+    ...fetchOptions
+  } = options;
+
   const response = await fetch(
     `${supabaseUrl}/rest/v1/${path}`,
     {
-      ...options,
+      ...fetchOptions,
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         "apikey": secretKey,
         "Content-Type": "application/json",
-        ...(options.headers || {})
+        ...additionalHeaders
       }
     }
   );
@@ -138,6 +248,8 @@ async function supabaseRequest(path, options = {}) {
   return data;
 }
 
+// Получение воспоминаний пользователя.
+
 async function loadMemories(userId) {
   const params = new URLSearchParams({
     select: "memory,category,importance",
@@ -151,6 +263,8 @@ async function loadMemories(userId) {
     { method: "GET" }
   );
 }
+
+// Сохранение воспоминания.
 
 async function saveMemory(userId, memory) {
   const search = new URLSearchParams({
@@ -188,6 +302,8 @@ async function saveMemory(userId, memory) {
   return "saved";
 }
 
+// Удаление отдельного воспоминания.
+
 async function forgetMemory(userId, memory) {
   const params = new URLSearchParams({
     yandex_user_id: `eq.${userId}`,
@@ -207,6 +323,8 @@ async function forgetMemory(userId, memory) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+// Очистка всей памяти пользователя.
+
 async function clearMemories(userId) {
   const params = new URLSearchParams({
     yandex_user_id: `eq.${userId}`
@@ -223,16 +341,22 @@ async function clearMemories(userId) {
   );
 }
 
+// Формирование ответа для Яндекс Алисы.
+
 function createResponse(body, text, history) {
   return {
     version: body.version || "1.0",
+
     response: {
       text: text.slice(0, 1024),
       end_session: false
     },
+
     session_state: makeSessionState(history)
   };
 }
+
+// Главный обработчик.
 
 export default async function handler(req, res) {
   const MODEL = "gemini-3.5-flash-lite";
@@ -241,6 +365,8 @@ export default async function handler(req, res) {
     process.env.SUPABASE_URL &&
     process.env.SUPABASE_SECRET_KEY
   );
+
+  // Проверка работоспособности сервера.
 
   if (req.method === "GET") {
     return res.status(200).json({
@@ -297,12 +423,14 @@ export default async function handler(req, res) {
       );
     }
 
+    // Постоянный идентификатор пользователя Яндекса.
+
     const userId =
       typeof body.session?.user?.user_id === "string"
         ? body.session.user.user_id
         : null;
 
-    // Обработка явных команд управления долговременной памятью.
+    // Обработка команд управления памятью.
 
     const memoryAction = getMemoryAction(command);
 
@@ -311,7 +439,7 @@ export default async function handler(req, res) {
         return res.status(200).json(
           createResponse(
             body,
-            "Чтобы я могла запоминать информацию между разговорами, войди в Яндекс ID в приложении с Алисой. Пока я могу помнить только текущий разговор.",
+            "Чтобы я могла запоминать информацию между разговорами, войди в Яндекс ID. Пока я могу помнить только текущий разговор.",
             history
           )
         );
@@ -371,7 +499,11 @@ export default async function handler(req, res) {
             createResponse(
               body,
               answer,
-              [...history, ["u", limitUtf8(command, 160)], ["m", answer]]
+              [
+                ...history,
+                ["u", limitUtf8(command, 160)],
+                ["m", answer]
+              ]
             )
           );
         }
@@ -390,7 +522,11 @@ export default async function handler(req, res) {
             createResponse(
               body,
               answer,
-              [...history, ["u", limitUtf8(command, 160)], ["m", answer]]
+              [
+                ...history,
+                ["u", limitUtf8(command, 160)],
+                ["m", answer]
+              ]
             )
           );
         }
@@ -398,7 +534,8 @@ export default async function handler(req, res) {
         if (memoryAction.type === "clear") {
           await clearMemories(userId);
 
-          const answer = "Готово. Я очистила долговременную память.";
+          const answer =
+            "Готово. Я очистила долговременную память.";
 
           return res.status(200).json(
             createResponse(
@@ -410,7 +547,10 @@ export default async function handler(req, res) {
         }
 
       } catch (memoryError) {
-        console.error("Memory operation failed:", memoryError);
+        console.error(
+          "Memory operation failed:",
+          memoryError
+        );
 
         return res.status(200).json(
           createResponse(
@@ -422,11 +562,13 @@ export default async function handler(req, res) {
       }
     }
 
-    // Загружаем долговременные воспоминания пользователя.
+    // Загрузка долговременной памяти.
 
     let memories = [];
 
     if (userId && memoryConfigured) {
+      const memoryStart = Date.now();
+
       try {
         memories = await loadMemories(userId);
 
@@ -434,13 +576,51 @@ export default async function handler(req, res) {
           memories = [];
         }
 
+        console.log(
+          "Memory loaded:",
+          memories.length,
+          "records in",
+          Date.now() - memoryStart,
+          "ms"
+        );
+
       } catch (memoryError) {
         console.error(
           "Memory loading failed:",
           memoryError
         );
+
+        memories = [];
       }
     }
+
+    // Сначала пробуем ответить непосредственно из базы.
+    // Если нашли подходящее воспоминание, Gemini не вызываем.
+
+    const directMemoryAnswer = findRelevantMemory(
+      command,
+      memories
+    );
+
+    if (directMemoryAnswer) {
+      const updatedHistory = [
+        ...history,
+        ["u", limitUtf8(command, 160)],
+        ["m", limitUtf8(directMemoryAnswer, 260)]
+      ];
+
+      console.log("Memory direct answer used");
+
+      return res.status(200).json(
+        createResponse(
+          body,
+          directMemoryAnswer,
+          updatedHistory
+        )
+      );
+    }
+
+    // Подготавливаем контекст для Gemini.
 
     const memoryContext = memories.length > 0
       ? memories
@@ -471,28 +651,35 @@ ${memoryContext}
       parts: [{ text: command }]
     });
 
+    // Запрос к Gemini.
+
     const start = Date.now();
 
     const geminiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
       {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": process.env.GEMINI_API_KEY
         },
+
         body: JSON.stringify({
           systemInstruction: {
             parts: [{
               text: systemInstruction
             }]
           },
+
           contents,
+
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 180
           }
         }),
+
         signal: AbortSignal.timeout(2200)
       }
     );
@@ -506,7 +693,11 @@ ${memoryContext}
     );
 
     if (!geminiResponse.ok) {
-      console.error("Gemini API error:", data);
+      console.error(
+        "Gemini API error:",
+        geminiResponse.status
+      );
+
       throw new Error(
         "Gemini API error: " + geminiResponse.status
       );
@@ -519,7 +710,9 @@ ${memoryContext}
         .trim() || "";
 
     if (!answer) {
-      throw new Error("Gemini returned an empty response");
+      throw new Error(
+        "Gemini returned an empty response"
+      );
     }
 
     const spokenAnswer = answer.slice(0, 1024);
@@ -539,7 +732,10 @@ ${memoryContext}
     );
 
   } catch (error) {
-    console.error("Assistant error:", error);
+    console.error(
+      "Assistant error:",
+      error
+    );
 
     return res.status(200).json(
       createResponse(
