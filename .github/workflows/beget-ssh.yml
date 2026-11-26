@@ -95,7 +95,7 @@ jobs:
 
       - name: Set up Node.js for source validation
         if: \${{ inputs.operation == 'upload' }}
-        uses: actions/setup-node@1e60f620b9541d7b1a6dce2b2f0d3f5c3c2c5b77 # v4.0.4
+        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
         with:
           node-version: 22
 
