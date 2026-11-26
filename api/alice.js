@@ -1201,12 +1201,37 @@ ${memoryContext}
 
     let geminiResponse;
     let data = null;
+    let responseModel = MODEL;
 
-    // Google иногда временно отвечает 503 из-за высокой нагрузки.
-    // Делаем одну короткую повторную попытку, только для временных ошибок.
+    // При перегрузке основной модели пробуем другой Gemini Flash.
+    // Это лучше, чем повторять запрос к тому же перегруженному серверу.
     for (let attempt = 1; attempt <= 2; attempt++) {
+      responseModel = attempt === 1
+        ? MODEL
+        : "gemini-3.8-flash";
+
+      const requestUrl =
+        `https://generativelanguage.googleapis.com/v1beta/models/${responseModel}:generateContent`;
+
+      const requestBody = attempt === 1
+        ? geminiBody
+        : JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: systemInstruction
+              }]
+            },
+            contents,
+            generationConfig: {
+              maxOutputTokens: 320,
+              thinkingConfig: {
+                thinkingLevel: "LOW"
+              }
+            }
+          });
+
       geminiResponse = await fetch(
-        geminiUrl,
+        requestUrl,
         {
           method: "POST",
 
@@ -1215,10 +1240,11 @@ ${memoryContext}
             "x-goog-api-key": process.env.GEMINI_API_KEY
           },
 
-          body: geminiBody,
+          body: requestBody,
 
+          // Сохраняем время для ответа Алисы и сохранения истории.
           signal: AbortSignal.timeout(
-            attempt === 1 ? 2700 : 1600
+            attempt === 1 ? 2700 : 1800
           )
         }
       );
@@ -1229,23 +1255,23 @@ ${memoryContext}
         break;
       }
 
-      const temporaryError =
-        [429, 500, 502, 503, 504].includes(geminiResponse.status);
+      const shouldUseFallback =
+        attempt === 1 &&
+        geminiResponse.status === 503 &&
+        Date.now() - start <= 1500;
 
-      const firstAttemptStillHasTime =
-        attempt === 1 && Date.now() - start <= 1700;
-
-      if (temporaryError && firstAttemptStillHasTime) {
+      if (shouldUseFallback) {
         console.warn(
-          "Gemini temporary error:",
-          geminiResponse.status,
-          "- retrying once"
+          "Gemini model overloaded:",
+          MODEL,
+          "- switching to gemini-3.8-flash"
         );
         continue;
       }
 
       console.error(
         "Gemini API error:",
+        responseModel,
         geminiResponse.status,
         data
       );
@@ -1254,6 +1280,11 @@ ${memoryContext}
         "Gemini API error: " + geminiResponse.status
       );
     }
+
+    console.log(
+      "Gemini response model:",
+      responseModel
+    );
 
     console.log(
       "Gemini response time:",
