@@ -509,7 +509,7 @@ function prepareSpokenAnswer(value, maxChars = 900) {
   // Модель иногда вставляет подсказку о продолжении внутрь рассказа
   // или диалога. Удаляем её из конца и добавляем отдельно ниже.
   text = text.replace(
-    /\\s*Скажи\\s+[«"']?продолжи[»"']?,\\s*и\\s+я\\s+продолжу\\.?[»"']?$/i,
+    /\s*Скажи\s+[«"']?продолжи[»"']?,\s*и\s+я\s+продолжу\.?[»"']?$/i,
     ""
   ).trim();
 
@@ -524,9 +524,9 @@ function prepareSpokenAnswer(value, maxChars = 900) {
       head.lastIndexOf(". "),
       head.lastIndexOf("! "),
       head.lastIndexOf("? "),
-      head.lastIndexOf(".\\n"),
-      head.lastIndexOf("!\\n"),
-      head.lastIndexOf("?\\n")
+      head.lastIndexOf(".\n"),
+      head.lastIndexOf("!\n"),
+      head.lastIndexOf("?\n")
     );
 
     if (sentenceEnd >= Math.floor(contentLimit * 0.5)) {
