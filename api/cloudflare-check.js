@@ -72,12 +72,17 @@ export default async function handler(req, res) {
         message_keys: message && typeof message === "object" ? Object.keys(message) : [],
         content_type: typeof message?.content,
         content_is_array: Array.isArray(message?.content),
-        content_keys: message?.content && typeof message.content === "object"
-          ? Object.keys(message.content)
-          : [],
-        content_json: message?.content && typeof message.content === "object"
-          ? JSON.stringify(message.content).slice(0, 500)
-          : null
+        content_is_null: message?.content === null,
+        reasoning_content_type: typeof message?.reasoning_content,
+        reasoning_content_sample: typeof message?.reasoning_content === "string"
+          ? message.reasoning_content.slice(0, 300)
+          : null,
+        reasoning_type: typeof message?.reasoning,
+        reasoning_sample: typeof message?.reasoning === "string"
+          ? message.reasoning.slice(0, 300)
+          : null,
+        finish_reason: firstChoice?.finish_reason,
+        token_usage: data?.result?.usage || null
       });
     }
 
