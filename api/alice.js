@@ -210,7 +210,7 @@ function findRelevantMemory(command, memories) {
     return null;
   }
 
-  return `Я помню: ${best.item.memory}`;
+  return `Я помню: ${best.item.memory}.`;
 }
 
 // -----------------------------
@@ -853,7 +853,7 @@ export default async function handler(req, res) {
     if (
       /^(?:новая тема|начнем новую тему|начнём новую тему|давай новую тему|начнем сначала|начнём сначала|сбрось контекст|очисти историю диалога)[.!?]*$/i.test(command)
     ) {
-      let answer = "Хорошо, начинаем новую тему в рамках текущей сессии.";
+      let answer = "Хорошо!";
 
       if (userId && memoryConfigured) {
         try {
@@ -861,7 +861,7 @@ export default async function handler(req, res) {
           answer = "Хорошо!";
         } catch (resetError) {
           console.error("Conversation reset failed:", resetError);
-          answer = "Не получилось очистить историю разговора. Долговременные воспоминания не затронуты.";
+          answer = "Не получилось очистить историю разговора.";
         }
       }
 
@@ -962,8 +962,8 @@ export default async function handler(req, res) {
           const result = await saveMemory(userId, memory);
 
           const answer = result === "exists"
-            ? "Я уже храню эту информацию в долговременной памяти."
-            : "Хорошо, я сохранила это в долговременной памяти. Смогу вспомнить даже в следующем разговоре.";
+            ? "Информация сохранена."
+            : "Хорошо, я сохранила у себя в голове.";
 
           await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
 
@@ -987,8 +987,8 @@ export default async function handler(req, res) {
           );
 
           const answer = deleted
-            ? "Хорошо, я удалила эту запись из памяти."
-            : "Не нашла точную такую запись в памяти.";
+            ? "Хорошо, я удалила эту запись."
+            : "Не нашла эту запись.";
 
           await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
 
@@ -1009,7 +1009,7 @@ export default async function handler(req, res) {
           await clearMemories(userId);
 
           const answer =
-            "Готово. Я очистила долговременную память.";
+            "Готово. Я очистила память.";
 
           await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
 
