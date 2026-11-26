@@ -1,0 +1,101 @@
+name: One-time Gemini API check on Beget
+
+on:
+  push:
+    paths:
+      - .github/workflows/beget-gemini-check-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  gemini-check:
+    if: startsWith(github.event.head_commit.message, 'ONE_TIME_GEMINI_CHECK')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configure verified Beget SSH access
+        shell: bash
+        env:
+          BEGET_SSH_HOST: ${{ vars.BEGET_SSH_HOST }}
+          BEGET_SSH_USER: ${{ vars.BEGET_SSH_USER }}
+          BEGET_SSH_PORT: ${{ vars.BEGET_SSH_PORT || '22' }}
+          BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}
+          BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$BEGET_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/id_ed25519"
+          {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "BEGET_SSH_HOST=$BEGET_SSH_HOST"
+            echo "BEGET_SSH_USER=$BEGET_SSH_USER"
+            echo "BEGET_SSH_PORT=$BEGET_SSH_PORT"
+          } >> "$GITHUB_ENV"
+
+      - name: Test Gemini API directly without displaying the key
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_SCRIPT_B64="$(base64 -w0 <<'BEGET_GEMINI_CHECK'
+          set +x
+          export PATH="$HOME/.local/bin:$PATH"
+          cd "$HOME/alice-ai-assistant"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const envText = fs.readFileSync(".env", "utf8");
+          const match = envText.match(/^\s*GEMINI_API_KEY\s*=\s*(.*?)\s*$/m);
+          let apiKey = match?.[1] || "";
+          if ((apiKey.startsWith('"') && apiKey.endsWith('"')) ||
+              (apiKey.startsWith("'") && apiKey.endsWith("'"))) {
+            apiKey = apiKey.slice(1, -1);
+          }
+
+          if (!apiKey) {
+            console.log("GEMINI_API_KEY: EMPTY");
+            process.exit(0);
+          }
+
+          console.log("GEMINI_API_KEY: present; length =", apiKey.length);
+          const endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": apiKey
+              },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: "Ответь одним словом: OK" }] }],
+                generationConfig: { maxOutputTokens: 20 }
+              }),
+              signal: AbortSignal.timeout(12000)
+            });
+            const data = await response.json().catch(() => null);
+            console.log("Gemini HTTP status:", response.status);
+            if (!response.ok) {
+              console.log("Google error status:", data?.error?.status || "not supplied");
+              console.log("Google error code:", data?.error?.code || response.status);
+              console.log("Google error message:", String(data?.error?.message || "No error message").slice(0, 900));
+            } else {
+              const answer = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+              console.log("Gemini response:", answer || "empty response");
+            }
+          } catch (error) {
+            console.log("Gemini network error:", error?.name || "Error");
+            console.log("Gemini network message:", String(error?.message || "").slice(0, 500));
+          }
+          NODE
+          BEGET_GEMINI_CHECK
+          )"
+          ssh -A -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -p "$BEGET_SSH_PORT" "$BEGET_SSH_USER@$BEGET_SSH_HOST" \
+            "printf '%s' '$REMOTE_SCRIPT_B64' | ssh -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 222 localhost 'base64 -d | bash'"
