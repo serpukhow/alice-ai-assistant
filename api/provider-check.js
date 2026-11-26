@@ -29,7 +29,7 @@ export default async function handler(req, res) {
                 content: item.text
               }))
             ],
-            max_tokens: 180,
+            max_tokens: 90,
             chat_template_kwargs: { enable_thinking: false },
             stream: false
           }),
