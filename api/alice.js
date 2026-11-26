@@ -838,7 +838,7 @@ export default async function handler(req, res) {
       if (userId && memoryConfigured) {
         try {
           await resetConversationContext(userId);
-          answer = "Хорошо, начинаем новую тему. Историю предыдущего разговора очистила, а долговременные воспоминания оставила.";
+          answer = "Хорошо!";
         } catch (resetError) {
           console.error("Conversation reset failed:", resetError);
           answer = "Не получилось очистить историю разговора. Долговременные воспоминания не затронуты.";
