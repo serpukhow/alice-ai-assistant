@@ -139,6 +139,18 @@ function tokenizeRussian(value) {
   ).map(normalizeRussianWord);
 }
 
+function shouldLoadMemories(command) {
+  const words = new Set(tokenizeRussian(command));
+
+  return [...words].some(word =>
+    ["я", "мне", "меня", "мой", "моя", "мое", "мои",
+     "назови", "скажи", "люблю", "предпочитаю"].includes(word) ||
+    word.startsWith("помн") ||
+    word.startsWith("вспомн") ||
+    word.startsWith("запомн")
+  );
+}
+
 function findRelevantMemory(command, memories) {
   const stopWords = new Set([
     "какой", "какая", "какие", "какое",
@@ -450,7 +462,7 @@ async function loadMemories(userId) {
     `alice_memories?${params.toString()}`,
     {
       method: "GET",
-      timeoutMs: 900
+      timeoutMs: 700
     }
   );
 }
@@ -544,7 +556,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 900
+      timeoutMs: 800
     }
   );
 
@@ -590,7 +602,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 650,
+      timeoutMs: 500,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -1028,16 +1040,22 @@ export default async function handler(req, res) {
     if (userId && memoryConfigured) {
       const contextLoadStart = Date.now();
 
-      const [memoryResult, conversationResult] = await Promise.all([
-        loadMemories(userId).catch(memoryError => {
-          console.error("Memory loading failed:", memoryError);
-          return [];
-        }),
+      const memoryPromise = shouldLoadMemories(command)
+        ? loadMemories(userId).catch(memoryError => {
+            console.error("Memory loading failed:", memoryError);
+            return [];
+          })
+        : Promise.resolve([]);
 
+      const conversationPromise =
         loadConversationContext(userId).catch(contextError => {
           console.error("Conversation context loading failed:", contextError);
           return null;
-        })
+        });
+
+      const [memoryResult, conversationResult] = await Promise.all([
+        memoryPromise,
+        conversationPromise
       ]);
 
       memories = Array.isArray(memoryResult) ? memoryResult : [];
@@ -1188,7 +1206,7 @@ ${memoryContext}
           }
         }),
 
-        signal: AbortSignal.timeout(2200)
+        signal: AbortSignal.timeout(2700)
       }
     );
 
