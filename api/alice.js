@@ -1208,7 +1208,7 @@ ${memoryContext}
     for (let attempt = 1; attempt <= 2; attempt++) {
       responseModel = attempt === 1
         ? MODEL
-        : "gemini-3.8-flash";
+        : "gemini-3.6-flash";
 
       const requestUrl =
         `https://generativelanguage.googleapis.com/v1beta/models/${responseModel}:generateContent`;
@@ -1244,7 +1244,7 @@ ${memoryContext}
 
           // Сохраняем время для ответа Алисы и сохранения истории.
           signal: AbortSignal.timeout(
-            attempt === 1 ? 2700 : 1800
+            attempt === 1 ? 2700 : 2200
           )
         }
       );
@@ -1264,7 +1264,7 @@ ${memoryContext}
         console.warn(
           "Gemini model overloaded:",
           MODEL,
-          "- switching to gemini-3.8-flash"
+          "- switching to gemini-3.6-flash"
         );
         continue;
       }
