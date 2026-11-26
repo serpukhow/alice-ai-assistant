@@ -12,6 +12,10 @@ function limitUtf8(value, maxBytes) {
     .replace(/\uFFFD$/, "");
 }
 
+// -----------------------------
+// ИСТОРИЯ ДИАЛОГА
+// -----------------------------
+
 function normalizeHistory(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -55,6 +59,10 @@ function makeSessionState(history) {
   return { h: [] };
 }
 
+// -----------------------------
+// КОМАНДЫ УПРАВЛЕНИЯ ПАМЯТЬЮ
+// -----------------------------
+
 function getMemoryAction(command) {
   if (
     /^(?:очисти|удали)\s+(?:всю\s+)?память[.!?]*$/i.test(command) ||
@@ -92,7 +100,9 @@ function isSensitiveMemory(value) {
   return /парол[ья]|api[\s_-]?key|sb_secret_|gsk_|токен|секретный ключ|ключ доступа/i.test(value);
 }
 
-// Нормализация распространённых форм русских слов.
+// -----------------------------
+// РУССКИЕ СЛОВА И ПОИСК ПАМЯТИ
+// -----------------------------
 
 function normalizeRussianWord(word) {
   const variants = {
@@ -128,8 +138,6 @@ function tokenizeRussian(value) {
       .match(/[\p{L}\p{N}]+/gu) || []
   ).map(normalizeRussianWord);
 }
-
-// Поиск подходящего воспоминания без обращения к Gemini.
 
 function findRelevantMemory(command, memories) {
   const stopWords = new Set([
@@ -193,11 +201,165 @@ function findRelevantMemory(command, memories) {
   return `Я помню: ${best.item.memory}`;
 }
 
-// Работа с Supabase.
+// -----------------------------
+// БЫСТРЫЙ КАЛЬКУЛЯТОР
+// -----------------------------
+
+function parseSpokenNumber(raw) {
+  const value = raw
+    .trim()
+    .toLowerCase()
+    .replace(",", ".");
+
+  if (/^\d+(?:\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+
+  const units = {
+    ноль: 0,
+    нуль: 0,
+    один: 1,
+    одна: 1,
+    одно: 1,
+    одну: 1,
+    два: 2,
+    две: 2,
+    три: 3,
+    четыре: 4,
+    пять: 5,
+    шесть: 6,
+    семь: 7,
+    восемь: 8,
+    девять: 9,
+    десять: 10,
+    одиннадцать: 11,
+    двенадцать: 12,
+    тринадцать: 13,
+    четырнадцать: 14,
+    пятнадцать: 15,
+    шестнадцать: 16,
+    семнадцать: 17,
+    восемнадцать: 18,
+    девятнадцать: 19,
+    двадцать: 20,
+    тридцать: 30,
+    сорок: 40,
+    пятьдесят: 50,
+    шестьдесят: 60,
+    семьдесят: 70,
+    восемьдесят: 80,
+    девяносто: 90,
+    сто: 100,
+    двести: 200,
+    триста: 300,
+    четыреста: 400,
+    пятьсот: 500
+  };
+
+  let result = 0;
+
+  for (const word of value.split(/\s+/)) {
+    if (!(word in units)) {
+      return null;
+    }
+
+    result += units[word];
+  }
+
+  return result;
+}
+
+function tryFastMath(command) {
+  const unitWords =
+    "(?:ноль|нуль|один|одна|одно|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|шестнадцать|семнадцать|восемнадцать|девятнадцать)";
+
+  const tensWords =
+    "(?:двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто)";
+
+  const numberPattern =
+    `(?:\\d+(?:[.,]\\d+)?|(?:${tensWords})(?:\\s+${unitWords})?|${unitWords}|сто|двести|триста|четыреста|пятьсот)`;
+
+  const operatorPattern =
+    "(умножить\\s+на|умножить|умножь\\s+на|умножь|помножить\\s+на|помножить|\\*|×|х|x|плюс|\\+|минус|−|разделить\\s+на|делить\\s+на|поделить\\s+на|÷|/)";
+
+  const pattern = new RegExp(
+    `(${numberPattern})\\s*${operatorPattern}\\s*(${numberPattern})`,
+    "i"
+  );
+
+  const match = command
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .match(pattern);
+
+  if (!match) {
+    return null;
+  }
+
+  const a = parseSpokenNumber(match[1]);
+  const operator = match[2].toLowerCase();
+  const b = parseSpokenNumber(match[3]);
+
+  if (a === null || b === null) {
+    return null;
+  }
+
+  let result;
+  let operation;
+
+  if (
+    operator.includes("умнож") ||
+    operator.includes("помнож") ||
+    ["*", "×", "х", "x"].includes(operator)
+  ) {
+    result = a * b;
+    operation = "умножить на";
+  } else if (
+    operator === "плюс" ||
+    operator === "+"
+  ) {
+    result = a + b;
+    operation = "плюс";
+  } else if (
+    operator === "минус" ||
+    operator === "−"
+  ) {
+    result = a - b;
+    operation = "минус";
+  } else {
+    if (b === 0) {
+      return "На ноль делить нельзя.";
+    }
+
+    result = a / b;
+    operation = "разделить на";
+  }
+
+  if (
+    !Number.isFinite(result) ||
+    Math.abs(result) > 1e15
+  ) {
+    return null;
+  }
+
+  const format = number =>
+    Number(number.toFixed(8)).toLocaleString("ru-RU", {
+      maximumFractionDigits: 8
+    });
+
+  return `${format(a)} ${operation} ${format(b)} будет ${format(result)}.`;
+}
+
+// -----------------------------
+// SUPABASE
+// -----------------------------
 
 async function supabaseRequest(path, options = {}) {
-  const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const secretKey = process.env.SUPABASE_SECRET_KEY;
+  const supabaseUrl =
+    process.env.SUPABASE_URL?.replace(/\/+$/, "");
+
+  const secretKey =
+    process.env.SUPABASE_SECRET_KEY;
 
   if (!supabaseUrl || !secretKey) {
     throw new Error("Supabase configuration is missing");
@@ -213,7 +375,9 @@ async function supabaseRequest(path, options = {}) {
     `${supabaseUrl}/rest/v1/${path}`,
     {
       ...fetchOptions,
+
       signal: AbortSignal.timeout(timeoutMs),
+
       headers: {
         "apikey": secretKey,
         "Content-Type": "application/json",
@@ -248,7 +412,7 @@ async function supabaseRequest(path, options = {}) {
   return data;
 }
 
-// Получение воспоминаний пользователя.
+// Получение воспоминаний.
 
 async function loadMemories(userId) {
   const params = new URLSearchParams({
@@ -260,7 +424,9 @@ async function loadMemories(userId) {
 
   return await supabaseRequest(
     `alice_memories?${params.toString()}`,
-    { method: "GET" }
+    {
+      method: "GET"
+    }
   );
 }
 
@@ -276,10 +442,15 @@ async function saveMemory(userId, memory) {
 
   const existing = await supabaseRequest(
     `alice_memories?${search.toString()}`,
-    { method: "GET" }
+    {
+      method: "GET"
+    }
   );
 
-  if (Array.isArray(existing) && existing.length > 0) {
+  if (
+    Array.isArray(existing) &&
+    existing.length > 0
+  ) {
     return "exists";
   }
 
@@ -287,9 +458,11 @@ async function saveMemory(userId, memory) {
     "alice_memories",
     {
       method: "POST",
+
       headers: {
         "Prefer": "return=minimal"
       },
+
       body: JSON.stringify({
         yandex_user_id: userId,
         memory,
@@ -302,7 +475,7 @@ async function saveMemory(userId, memory) {
   return "saved";
 }
 
-// Удаление отдельного воспоминания.
+// Удаление воспоминания.
 
 async function forgetMemory(userId, memory) {
   const params = new URLSearchParams({
@@ -314,6 +487,7 @@ async function forgetMemory(userId, memory) {
     `alice_memories?${params.toString()}&select=id`,
     {
       method: "DELETE",
+
       headers: {
         "Prefer": "return=representation"
       }
@@ -334,6 +508,7 @@ async function clearMemories(userId) {
     `alice_memories?${params.toString()}`,
     {
       method: "DELETE",
+
       headers: {
         "Prefer": "return=minimal"
       }
@@ -341,7 +516,9 @@ async function clearMemories(userId) {
   );
 }
 
-// Формирование ответа для Яндекс Алисы.
+// -----------------------------
+// ФОРМИРОВАНИЕ ОТВЕТА
+// -----------------------------
 
 function createResponse(body, text, history) {
   return {
@@ -356,7 +533,9 @@ function createResponse(body, text, history) {
   };
 }
 
-// Главный обработчик.
+// -----------------------------
+// ОСНОВНОЙ ОБРАБОТЧИК
+// -----------------------------
 
 export default async function handler(req, res) {
   const MODEL = "gemini-3.5-flash-lite";
@@ -366,7 +545,7 @@ export default async function handler(req, res) {
     process.env.SUPABASE_SECRET_KEY
   );
 
-  // Проверка работоспособности сервера.
+  // Проверка сервера.
 
   if (req.method === "GET") {
     return res.status(200).json({
@@ -423,14 +602,42 @@ export default async function handler(req, res) {
       );
     }
 
-    // Постоянный идентификатор пользователя Яндекса.
+    // Постоянный ID пользователя Яндекса.
 
     const userId =
       typeof body.session?.user?.user_id === "string"
         ? body.session.user.user_id
         : null;
 
-    // Обработка команд управления памятью.
+    // -----------------------------
+    // БЫСТРАЯ МАТЕМАТИКА
+    // -----------------------------
+
+    // Считаем без Gemini и Supabase.
+
+    const fastMathAnswer = tryFastMath(command);
+
+    if (fastMathAnswer) {
+      const updatedHistory = [
+        ...history,
+        ["u", limitUtf8(command, 160)],
+        ["m", limitUtf8(fastMathAnswer, 260)]
+      ];
+
+      console.log("Fast math answer used");
+
+      return res.status(200).json(
+        createResponse(
+          body,
+          fastMathAnswer,
+          updatedHistory
+        )
+      );
+    }
+
+    // -----------------------------
+    // КОМАНДЫ ПАМЯТИ
+    // -----------------------------
 
     const memoryAction = getMemoryAction(command);
 
@@ -562,7 +769,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // Загрузка долговременной памяти.
+    // -----------------------------
+    // ЗАГРУЗКА ДОЛГОВРЕМЕННОЙ ПАМЯТИ
+    // -----------------------------
 
     let memories = [];
 
@@ -594,8 +803,11 @@ export default async function handler(req, res) {
       }
     }
 
-    // Сначала пробуем ответить непосредственно из базы.
-    // Если нашли подходящее воспоминание, Gemini не вызываем.
+    // -----------------------------
+    // ПРЯМОЙ ОТВЕТ ИЗ ПАМЯТИ
+    // -----------------------------
+
+    // Если нужный факт найден, Gemini не вызывается.
 
     const directMemoryAnswer = findRelevantMemory(
       command,
@@ -620,7 +832,9 @@ export default async function handler(req, res) {
       );
     }
 
-    // Подготавливаем контекст для Gemini.
+    // -----------------------------
+    // ПОДГОТОВКА КОНТЕКСТА GEMINI
+    // -----------------------------
 
     const memoryContext = memories.length > 0
       ? memories
@@ -651,7 +865,9 @@ ${memoryContext}
       parts: [{ text: command }]
     });
 
-    // Запрос к Gemini.
+    // -----------------------------
+    // ЗАПРОС К GEMINI
+    // -----------------------------
 
     const start = Date.now();
 
@@ -675,8 +891,11 @@ ${memoryContext}
           contents,
 
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 180
+            maxOutputTokens: 180,
+
+            thinkingConfig: {
+              thinkingLevel: "MINIMAL"
+            }
           }
         }),
 
@@ -695,7 +914,8 @@ ${memoryContext}
     if (!geminiResponse.ok) {
       console.error(
         "Gemini API error:",
-        geminiResponse.status
+        geminiResponse.status,
+        data
       );
 
       throw new Error(
