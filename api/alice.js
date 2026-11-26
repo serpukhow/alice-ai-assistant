@@ -1,4 +1,6 @@
 
+import { waitUntil } from "@vercel/functions";
+
 function limitUtf8(value, maxBytes) {
   const buffer = Buffer.from(value, "utf8");
 
@@ -580,7 +582,7 @@ async function loadConversationContext(userId) {
     "alice_conversation_context?" + params.toString(),
     {
       method: "GET",
-      timeoutMs: 800
+      timeoutMs: 1200
     }
   );
 
@@ -626,7 +628,7 @@ async function saveConversationContext(userId, existing, command, answer) {
     "alice_conversation_context?on_conflict=yandex_user_id",
     {
       method: "POST",
-      timeoutMs: 300,
+      timeoutMs: 1500,
       headers: {
         "Prefer": "resolution=merge-duplicates,return=minimal"
       },
@@ -909,7 +911,7 @@ export default async function handler(req, res) {
         ["m", limitUtf8(fastMathAnswer, 260)]
       ];
 
-      await persistEarlyConversationTurn(userId, memoryConfigured, command, fastMathAnswer);
+      waitUntil(persistEarlyConversationTurn(userId, memoryConfigured, command, fastMathAnswer));
 
       console.log("Fast math answer used");
 
@@ -989,7 +991,7 @@ export default async function handler(req, res) {
             ? "Информация сохранена."
             : "Хорошо, я сохранила у себя в голове.";
 
-          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
+          waitUntil(persistEarlyConversationTurn(userId, memoryConfigured, command, answer));
 
           return res.status(200).json(
             createResponse(
@@ -1014,7 +1016,7 @@ export default async function handler(req, res) {
             ? "Хорошо, я удалила эту запись."
             : "Не нашла эту запись.";
 
-          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
+          waitUntil(persistEarlyConversationTurn(userId, memoryConfigured, command, answer));
 
           return res.status(200).json(
             createResponse(
@@ -1035,7 +1037,7 @@ export default async function handler(req, res) {
           const answer =
             "Готово. Я очистила память.";
 
-          await persistEarlyConversationTurn(userId, memoryConfigured, command, answer);
+          waitUntil(persistEarlyConversationTurn(userId, memoryConfigured, command, answer));
 
           return res.status(200).json(
             createResponse(
@@ -1143,16 +1145,16 @@ export default async function handler(req, res) {
       ];
 
       if (userId && memoryConfigured) {
-        try {
-          await saveConversationContext(
+        waitUntil(
+          saveConversationContext(
             userId,
             conversationContext,
             command,
             directMemoryAnswer
-          );
-        } catch (saveError) {
-          console.error("Conversation context save failed:", saveError);
-        }
+          ).catch(saveError => {
+            console.error("Conversation context save failed:", saveError);
+          })
+        );
       }
 
       console.log("Memory direct answer used");
@@ -1437,16 +1439,16 @@ ${memoryContext}
     ];
 
     if (userId && memoryConfigured) {
-      try {
-        await saveConversationContext(
+      waitUntil(
+        saveConversationContext(
           userId,
           conversationContext,
           command,
           spokenAnswer
-        );
-      } catch (saveError) {
-        console.error("Conversation context save failed:", saveError);
-      }
+        ).catch(saveError => {
+          console.error("Conversation context save failed:", saveError);
+        })
+      );
     }
 
     return res.status(200).json(
