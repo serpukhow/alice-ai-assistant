@@ -820,9 +820,6 @@ export default async function handler(req, res) {
         ? rawCommand.trim()
         : "";
 
-    const isFallbackDiagnostic =
-      /^проверь резервную модель[.!?]*$/i.test(command);
-
     if (!command) {
       return res.status(200).json(
         createResponse(
@@ -1040,7 +1037,7 @@ export default async function handler(req, res) {
     let memories = [];
     let conversationContext = null;
 
-    if (userId && memoryConfigured && !isFallbackDiagnostic) {
+    if (userId && memoryConfigured) {
       const contextLoadStart = Date.now();
 
       const memoryPromise = shouldLoadMemories(command)
@@ -1206,18 +1203,11 @@ ${memoryContext}
     let data = null;
     let responseModel = MODEL;
 
-    // Временная диагностическая команда позволяет проверить резервную
-    // модель напрямую, не дожидаясь случайной перегрузки основной.
-    if (isFallbackDiagnostic) {
-      console.log("Fallback diagnostic: forcing gemini-3.1-flash-lite");
-    }
-
     // При перегрузке основной модели пробуем другой Gemini Flash.
-    // Это лучше, чем повторять запрос к тому же перегруженному серверу.
-    const maxGeminiAttempts = isFallbackDiagnostic ? 1 : 2;
-
-    for (let attempt = 1; attempt <= maxGeminiAttempts; attempt++) {
-      responseModel = isFallbackDiagnostic || attempt === 2
+    // Это временный резерв внутри Google; для независимого резерва
+    // подключим отдельного провайдера.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      responseModel = attempt === 2
         ? "gemini-3.1-flash-lite"
         : MODEL;
 
@@ -1226,35 +1216,20 @@ ${memoryContext}
 
       const requestBody = responseModel === MODEL
         ? geminiBody
-        : isFallbackDiagnostic
-          ? JSON.stringify({
-              contents: [{
-                role: "user",
-                parts: [{
-                  text: "Ответь одной короткой фразой на русском: резервная модель работает."
-                }]
-              }],
-              generationConfig: {
-                maxOutputTokens: 48,
-                thinkingConfig: {
-                  thinkingLevel: "MINIMAL"
-                }
+        : JSON.stringify({
+            systemInstruction: {
+              parts: [{
+                text: systemInstruction
+              }]
+            },
+            contents,
+            generationConfig: {
+              maxOutputTokens: 320,
+              thinkingConfig: {
+                thinkingLevel: "MINIMAL"
               }
-            })
-          : JSON.stringify({
-              systemInstruction: {
-                parts: [{
-                  text: systemInstruction
-                }]
-              },
-              contents,
-              generationConfig: {
-                maxOutputTokens: 320,
-                thinkingConfig: {
-                  thinkingLevel: "MINIMAL"
-                }
-              }
-            });
+            }
+          });
 
       geminiResponse = await fetch(
         requestUrl,
@@ -1282,7 +1257,6 @@ ${memoryContext}
       }
 
       const shouldUseFallback =
-        !isFallbackDiagnostic &&
         responseModel === MODEL &&
         attempt === 1 &&
         geminiResponse.status === 503 &&
@@ -1344,7 +1318,7 @@ ${memoryContext}
       ["m", limitUtf8(spokenAnswer, 260)]
     ];
 
-    if (userId && memoryConfigured && !isFallbackDiagnostic) {
+    if (userId && memoryConfigured) {
       try {
         await saveConversationContext(
           userId,
