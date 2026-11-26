@@ -2,9 +2,10 @@
 
 Workflow: .github/workflows/beget-ssh.yml (на ветке main).
 
-Он запускается только вручную и поддерживает четыре фиксированные операции:
+Он запускается только вручную и поддерживает пять фиксированных операций:
 - check-ssh — проверить вход в аккаунт Beget.
 - check-docker — проверить переход во внутреннее Docker-окружение Beget и доступность Node.js/npm.
+- install-node — установить Node.js 24.15.0 в ~/.local для Ubuntu 22.04 x86_64; перед установкой проверяется SHA-256 официального архива.
 - upload — отправить файлы приложения в каталог приложения вне public_html.
 - restart — создать сигнал перезапуска Passenger (после настройки PassengerAppRoot).
 
@@ -101,7 +102,9 @@ https://github.com/serpukhow/alice-ai-assistant/actions
 Выбери workflow «Beget SSH deployment» → Run workflow:
 1. Сначала выбери check-ssh.
 2. После успешного входа выбери check-docker.
-3. Только когда обе проверки успешны, выбери upload.
+3. Если Node.js отсутствует, выбери install-node. Операция подходит для Ubuntu 22.04 x86_64 и устанавливает Node.js 24.15.0 в ~/.local.
+4. После успешной установки выбери check-docker ещё раз.
+5. Только когда вход в Docker и Node.js/npm проверены, выбери upload.
 
 Upload отправит:
 - server.js
