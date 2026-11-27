@@ -242,6 +242,20 @@ function findRelevantMemory(command, memories) {
 }
 
 // -----------------------------
+// ПОИСК В ИНТЕРНЕТЕ
+// -----------------------------
+
+function shouldUseWebSearch(command) {
+  const normalized = String(command || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .trim();
+
+  return /(?:найт\w*|поищ\w*|отыщ\w*|ищи\w*|поиск\w*|где\s+(?:найти|скачать|посмотреть)|ссылк\w*\s+на)/
+    .test(normalized);
+}
+
+// -----------------------------
 // БЫСТРЫЙ КАЛЬКУЛЯТОР
 // -----------------------------
 
@@ -867,6 +881,7 @@ export default async function handler(req, res) {
 
   let body = {};
   let history = [];
+  let webSearchRequested = false;
 
   try {
     body = req.body || {};
@@ -901,6 +916,11 @@ export default async function handler(req, res) {
           history
         )
       );
+    }
+
+    webSearchRequested = shouldUseWebSearch(command);
+    if (webSearchRequested) {
+      console.log("Internet search requested");
     }
 
     // Постоянный ID пользователя Яндекса.
@@ -1228,6 +1248,8 @@ export default async function handler(req, res) {
 Ты голосовой помощник Алисы.
 Отвечай на русском языке, естественно, понятно и по существу.
 Учитывай предыдущие реплики: сохраняй тему разговора, понимай уточнения вроде "почему?", "а дальше?" и "объясни подробнее".
+Если пользователь прямо просит что-либо найти, поискать, отыскать или дать ссылку, используй встроенный поиск Google Search. Это относится в том числе к учебникам, конкретным параграфам, книгам, сайтам и учебным материалам.
+По результатам поиска называй найденные материалы и реальные сайты-источники. Не выдумывай названия, авторов, издания, ссылки или содержание. Если надёжного результата нет, прямо скажи, что найти его не удалось, и уточни недостающие данные.
 В вопросах по учебникам и обучению объясняй последовательно, простыми словами, не пропускай важные шаги.
 Не упрощай научные факты до неверных утверждений. Если используешь аналогию, ясно показывай, где она условная, а где научный факт.
 Различай побочный продукт и бесполезные отходы: не утверждай, что вещество организму совсем не нужно, если он сам его использует в других процессах.
@@ -1302,6 +1324,9 @@ ${memoryContext}
               }]
             },
             contents,
+            ...(webSearchRequested
+              ? { tools: [{ google_search: {} }] }
+              : {}),
             generationConfig: {
               maxOutputTokens: 320,
               thinkingConfig: {
@@ -1322,10 +1347,39 @@ ${memoryContext}
         throw new Error("Gemini API error: " + response.status);
       }
 
-      const text = data?.candidates?.[0]?.content?.parts
+      let text = data?.candidates?.[0]?.content?.parts
         ?.map(part => part.text || "")
         .join("")
         .trim() || "";
+
+      if (webSearchRequested) {
+        const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const seenSources = new Set();
+        const sources = chunks
+          .map(chunk => chunk?.web)
+          .filter(web => web?.uri)
+          .filter(web => {
+            if (seenSources.has(web.uri)) return false;
+            seenSources.add(web.uri);
+            return true;
+          })
+          .slice(0, 2)
+          .map(web => {
+            let domain = "";
+            try {
+              domain = new URL(web.uri).hostname.replace(/^www\\./, "");
+            } catch {
+              domain = web.uri;
+            }
+            return web.title
+              ? `${web.title} (${domain})`
+              : domain;
+          });
+
+        if (sources.length > 0) {
+          text += "\\nИсточники: " + sources.join("; ") + ".";
+        }
+      }
 
       if (!text) {
         throw new Error("Gemini returned an empty response");
@@ -1448,10 +1502,11 @@ ${memoryContext}
     let winner;
 
     try {
-      winner = await Promise.any([
-        geminiPromise,
-        cloudflarePromise
-      ]);
+      winner = await Promise.any(
+        webSearchRequested
+          ? [geminiPromise]
+          : [geminiPromise, cloudflarePromise]
+      );
     } catch (providerErrors) {
       console.error(
         "All AI providers failed:",
@@ -1515,7 +1570,9 @@ ${memoryContext}
     return res.status(200).json(
       createResponse(
         body,
-        "Нейросеть недоступна, попробуйте позже.",
+        webSearchRequested
+          ? "Сейчас не получилось выполнить поиск в интернете. Попробуй немного позже."
+          : "Нейросеть недоступна, попробуйте позже.",
         history
       )
     );
