@@ -1367,7 +1367,7 @@ ${memoryContext}
           .map(web => {
             let domain = "";
             try {
-              domain = new URL(web.uri).hostname.replace(/^www\\./, "");
+              domain = new URL(web.uri).hostname.replace(/^www\./, "");
             } catch {
               domain = web.uri;
             }
@@ -1377,7 +1377,7 @@ ${memoryContext}
           });
 
         if (sources.length > 0) {
-          text += "\\nИсточники: " + sources.join("; ") + ".";
+          text += "\nИсточники: " + sources.join("; ") + ".";
         }
       }
 
